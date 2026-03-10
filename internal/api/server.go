@@ -207,9 +207,13 @@ func normalizeIP(s string) string {
 // the only trustworthy source. Falls back to RemoteAddr.
 func trustedRealIP(r *http.Request) string {
 	if isLoopback(r.RemoteAddr) {
+		// Behind trusted proxy: use X-Real-Ip only.
+		// Do NOT fall back to loopback RemoteAddr — all clients would share
+		// one rate-limit bucket, creating both DoS and bypass risks.
 		if ip := normalizeIP(r.Header.Get("X-Real-Ip")); ip != "" {
 			return ip
 		}
+		return "unknown"
 	}
 	if ip := normalizeIP(r.RemoteAddr); ip != "" {
 		return ip

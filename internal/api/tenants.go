@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,7 +153,7 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "registration temporarily unavailable")
 			return
 		}
-		provided := r.Header.Get("X-Bootstrap-Token")
+		provided := strings.TrimSpace(r.Header.Get("X-Bootstrap-Token"))
 		// HMAC-compare to prevent length-leak from ConstantTimeCompare
 		if !hmacEqual(provided, s.bootstrapToken, s.masterKey) {
 			writeError(w, http.StatusUnauthorized, "missing or invalid bootstrap token")
