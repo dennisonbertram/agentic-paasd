@@ -328,12 +328,16 @@ func (s *Server) handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(
+	res, err := tx.Exec(
 		`UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?`,
 		now, tenantID,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete tenant")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, http.StatusNotFound, "tenant not found")
 		return
 	}
 
