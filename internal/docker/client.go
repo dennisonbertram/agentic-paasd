@@ -11,8 +11,11 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 )
 
 // Client wraps the Docker Engine API client with paasd-specific defaults.
@@ -318,4 +321,88 @@ func (c *Client) VerifyGVisorRuntime(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("gVisor runtime (runsc) not found in Docker daemon")
+}
+
+// RunDatabaseConfig holds parameters for running a database container.
+type RunDatabaseConfig struct {
+	Name          string
+	Image         string
+	HostPort      int
+	ContainerPort int
+	Env           map[string]string
+	Cmd           []string
+	VolumeName    string
+	MountPath     string
+}
+
+// CreateVolume creates a named Docker volume.
+func (c *Client) CreateVolume(ctx context.Context, name string) error {
+	_, err := c.cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name: name,
+	})
+	if err != nil {
+		return fmt.Errorf("create volume %s: %w", name, err)
+	}
+	return nil
+}
+
+// RemoveVolume removes a named Docker volume.
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	return c.cli.VolumeRemove(ctx, name, true)
+}
+
+// RunDatabase creates and starts a database container with host port mapping
+// and persistent volume. Database containers do NOT use gVisor (they need direct
+// filesystem access for data storage), but are bound to 127.0.0.1 only.
+func (c *Client) RunDatabase(ctx context.Context, cfg RunDatabaseConfig) (string, error) {
+	env := make([]string, 0, len(cfg.Env))
+	for k, v := range cfg.Env {
+		env = append(env, k+"="+v)
+	}
+
+	portStr := fmt.Sprintf("%d/tcp", cfg.ContainerPort)
+
+	hostCfg := &container.HostConfig{
+		PortBindings: nat.PortMap{
+			nat.Port(portStr): []nat.PortBinding{
+				{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", cfg.HostPort)},
+			},
+		},
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeVolume,
+				Source: cfg.VolumeName,
+				Target: cfg.MountPath,
+			},
+		},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+	}
+
+	containerCfg := &container.Config{
+		Image: cfg.Image,
+		Env:   env,
+		ExposedPorts: nat.PortSet{
+			nat.Port(portStr): struct{}{},
+		},
+		Labels: map[string]string{
+			"paasd.managed": "true",
+			"paasd.type":    "database",
+		},
+	}
+
+	if len(cfg.Cmd) > 0 {
+		containerCfg.Cmd = cfg.Cmd
+	}
+
+	resp, err := c.cli.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, cfg.Name)
+	if err != nil {
+		return "", fmt.Errorf("create database container: %w", err)
+	}
+
+	if err := c.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		_ = c.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("start database container: %w", err)
+	}
+
+	return resp.ID, nil
 }

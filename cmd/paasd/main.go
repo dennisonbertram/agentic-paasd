@@ -15,6 +15,7 @@ import (
 	"github.com/paasd/paasd/internal/api"
 	"github.com/paasd/paasd/internal/builder"
 	"github.com/paasd/paasd/internal/builds"
+	"github.com/paasd/paasd/internal/databases"
 	"github.com/paasd/paasd/internal/db"
 	"github.com/paasd/paasd/internal/docker"
 	"github.com/paasd/paasd/internal/services"
@@ -108,6 +109,9 @@ func main() {
 		buildMgr = builds.NewManager(store.StateDB, nixBuilder, svcMgr.DeployImage)
 	}
 
+	// Create database manager
+	dbMgr := databases.NewManager(store.StateDB, dockerClient, masterKey[:32])
+
 	// Create server
 	srv := api.NewServer(api.ServerConfig{
 		Store:            store,
@@ -117,6 +121,7 @@ func main() {
 		OpenRegistration: *openRegistration,
 		Docker:           dockerClient,
 		BuildManager:     buildMgr,
+		DatabaseManager:  dbMgr,
 	})
 
 	// Default to 127.0.0.1 in ALL modes (loopback only).

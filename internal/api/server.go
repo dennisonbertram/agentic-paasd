@@ -14,6 +14,7 @@ import (
 	"github.com/paasd/paasd/internal/httpx"
 	"github.com/paasd/paasd/internal/middleware"
 	"github.com/paasd/paasd/internal/builds"
+	"github.com/paasd/paasd/internal/databases"
 	"github.com/paasd/paasd/internal/services"
 )
 
@@ -25,6 +26,7 @@ type ServerConfig struct {
 	OpenRegistration bool
 	Docker           *docker.Client
 	BuildManager     *builds.Manager
+	DatabaseManager  *databases.Manager
 }
 
 type Server struct {
@@ -38,6 +40,7 @@ type Server struct {
 	authInvalidator  *middleware.AuthCacheInvalidator
 	svcManager       *services.Manager
 	buildManager     *builds.Manager
+	dbManager        *databases.Manager
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -63,6 +66,7 @@ func NewServer(cfg ServerConfig) *Server {
 		authMW:           authMW,
 		svcManager:       svcMgr,
 		buildManager:     cfg.BuildManager,
+		dbManager:        cfg.DatabaseManager,
 	}
 	s.setupRoutes()
 	return s
@@ -136,6 +140,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildGet)
 		// Build log streaming is in a separate group (no 30s timeout)
 		r.Delete("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildCancel)
+
+		// Database routes
+		r.Post("/v1/databases", s.handleDatabaseCreate)
+		r.Get("/v1/databases", s.handleDatabaseList)
+		r.Get("/v1/databases/{dbID}", s.handleDatabaseGet)
+		r.Get("/v1/databases/{dbID}/connection-string", s.handleDatabaseConnectionString)
+		r.Delete("/v1/databases/{dbID}", s.handleDatabaseDelete)
 	})
 
 	// Streaming endpoints — auth required but no 30s timeout (for ?follow=true)
