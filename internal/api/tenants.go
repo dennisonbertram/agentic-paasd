@@ -137,7 +137,7 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	ip := trustedRealIP(r)
 	if !regLimiter.allow(ip) {
 		w.Header().Set("Retry-After", "3600")
-		http.Error(w, `{"error":"rate limit exceeded, try again later"}`, http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded, try again later")
 		return
 	}
 
@@ -148,32 +148,32 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		provided := r.Header.Get("X-Bootstrap-Token")
 		// HMAC-compare to prevent length-leak from ConstantTimeCompare
 		if !hmacEqual(provided, s.bootstrapToken, s.masterKey) {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 	}
 
 	var req RegisterRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if len(req.Name) < 2 {
-		http.Error(w, `{"error":"name must be at least 2 characters"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name must be at least 2 characters")
 		return
 	}
 	if len(req.Name) > 128 {
-		http.Error(w, `{"error":"name must be at most 128 characters"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name must be at most 128 characters")
 		return
 	}
 
 	if !emailRegex.MatchString(req.Email) {
-		http.Error(w, `{"error":"invalid email format"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid email format")
 		return
 	}
 	if len(req.Email) > 256 {
-		http.Error(w, `{"error":"email too long"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "email too long")
 		return
 	}
 
@@ -181,24 +181,24 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	// from malformed requests. Only counts active tenants.
 	var tenantCount int
 	if err := s.store.StateDB.QueryRow(`SELECT COUNT(*) FROM tenants WHERE status = 'active'`).Scan(&tenantCount); err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if tenantCount >= maxTenants {
-		http.Error(w, `{"error":"maximum tenants reached"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "maximum tenants reached")
 		return
 	}
 
 	tenantID, err := generateID()
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	now := time.Now().Unix()
 
 	tx, err := s.store.StateDB.Begin()
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer tx.Rollback()
@@ -210,7 +210,7 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		// Use generic error to prevent email enumeration via duplicate detection
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -219,13 +219,13 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	apiKey, keyID, err := crypto.GenerateAPIKeyWithID()
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -239,12 +239,12 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		keyID, tenantID, prefix, keyHash, now,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -267,7 +267,7 @@ func (s *Server) handleTenantGet(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	).Scan(&t.ID, &t.Name, &t.Email, &t.Status, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
-		http.Error(w, `{"error":"tenant not found"}`, http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "tenant not found")
 		return
 	}
 
@@ -279,13 +279,13 @@ func (s *Server) handleTenantUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var req UpdateTenantRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.Name != nil {
 		if len(*req.Name) < 2 || len(*req.Name) > 128 {
-			http.Error(w, `{"error":"name must be 2-128 characters"}`, http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "name must be 2-128 characters")
 			return
 		}
 		_, err := s.store.StateDB.Exec(
@@ -293,7 +293,7 @@ func (s *Server) handleTenantUpdate(w http.ResponseWriter, r *http.Request) {
 			*req.Name, time.Now().Unix(), tenantID,
 		)
 		if err != nil {
-			http.Error(w, `{"error":"failed to update tenant"}`, http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "failed to update tenant")
 			return
 		}
 	}
@@ -307,7 +307,7 @@ func (s *Server) handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := s.store.StateDB.Begin()
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer tx.Rollback()
@@ -317,7 +317,7 @@ func (s *Server) handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 		now, tenantID,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"failed to delete tenant"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to delete tenant")
 		return
 	}
 
@@ -327,12 +327,12 @@ func (s *Server) handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 		now, tenantID,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 

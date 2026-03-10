@@ -149,13 +149,13 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "missing authorization header")
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid authorization format")
 				return
 			}
 			token := parts[1]
@@ -163,14 +163,14 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 			// Token format: "keyID.secret" for O(1) lookup
 			dotIdx := strings.IndexByte(token, '.')
 			if dotIdx < 1 || dotIdx >= len(token)-1 {
-				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 			keyID := token[:dotIdx]
 			secret := token[dotIdx+1:]
 
 			if len(keyID) > 64 || len(secret) > 256 {
-				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 
@@ -193,7 +193,7 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 					keyID, now,
 				).Scan(&tenantID, &keyHash, &status)
 				if err != nil {
-					http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+					writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 					return
 				}
 
@@ -206,12 +206,12 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 			}
 
 			if status != "active" {
-				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 
 			if !crypto.VerifyAPIKey(keyHash, secret, masterKey) {
-				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 

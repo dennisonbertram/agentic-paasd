@@ -85,13 +85,13 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		if tenantID == "" {
 			// Fail closed: reject if tenant ID is missing (should never happen
 			// in authenticated routes, but prevents bypass if context is lost)
-			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 
 		limiter := rl.getLimiter(tenantID)
 		if !limiter.Allow() {
-			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 
@@ -114,7 +114,7 @@ func NewGlobalRateLimiter(rps float64, burst int) *GlobalRateLimiter {
 func (gl *GlobalRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !gl.limiter.Allow() {
-			http.Error(w, `{"error":"global rate limit exceeded"}`, http.StatusTooManyRequests)
+			writeJSONError(w, http.StatusTooManyRequests, "global rate limit exceeded")
 			return
 		}
 		next.ServeHTTP(w, r)

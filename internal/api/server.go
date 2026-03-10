@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"log"
 	"net"
 	"net/http"
@@ -113,6 +114,14 @@ func jsonContentType(next http.Handler) http.Handler {
 	})
 }
 
+// writeError writes a consistent JSON error response. Always use this instead
+// of http.Error to ensure correct Content-Type and valid JSON formatting.
+func writeError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
 func maxBodySize(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,13 +150,13 @@ func requireHTTPS(next http.Handler) http.Handler {
 			// Request from trusted proxy — check forwarded proto
 			proto := r.Header.Get("X-Forwarded-Proto")
 			if proto != "https" {
-				http.Error(w, `{"error":"HTTPS required"}`, http.StatusForbidden)
+				writeError(w, http.StatusForbidden, "HTTPS required")
 				return
 			}
 		} else {
 			// Direct connection (not via proxy) — reject unless already TLS
 			if r.TLS == nil {
-				http.Error(w, `{"error":"HTTPS required"}`, http.StatusForbidden)
+				writeError(w, http.StatusForbidden, "HTTPS required")
 				return
 			}
 		}

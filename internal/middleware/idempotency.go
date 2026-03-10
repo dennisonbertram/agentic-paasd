@@ -96,7 +96,7 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 
 		// Validate key length
 		if len(key) > maxIdempotencyKeyLen {
-			http.Error(w, `{"error":"idempotency key too long"}`, http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "idempotency key too long")
 			return
 		}
 

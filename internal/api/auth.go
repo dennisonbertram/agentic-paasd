@@ -39,7 +39,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateKeyRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -48,7 +48,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ExpiresIn != nil && *req.ExpiresIn <= 0 {
-		http.Error(w, `{"error":"expires_in must be positive"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "expires_in must be positive")
 		return
 	}
 
@@ -58,17 +58,17 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	).Scan(&keyCount)
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if keyCount >= maxKeysPerTenant {
-		http.Error(w, `{"error":"maximum API keys reached, revoke unused keys first"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "maximum API keys reached, revoke unused keys first")
 		return
 	}
 
 	apiKey, keyID, err := crypto.GenerateAPIKeyWithID()
 	if err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -89,7 +89,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		keyID, tenantID, req.Name, prefix, keyHash, now, expiresAt,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"failed to create key"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to create key")
 		return
 	}
 
@@ -118,7 +118,7 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"failed to list keys"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to list keys")
 		return
 	}
 	defer rows.Close()
@@ -132,7 +132,7 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		keys = append(keys, k)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, `{"error":"failed to list keys"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to list keys")
 		return
 	}
 
@@ -148,13 +148,13 @@ func (s *Server) handleKeyRevoke(w http.ResponseWriter, r *http.Request) {
 		time.Now().Unix(), keyID, tenantID,
 	)
 	if err != nil {
-		http.Error(w, `{"error":"failed to revoke key"}`, http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to revoke key")
 		return
 	}
 
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
-		http.Error(w, `{"error":"key not found"}`, http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "key not found")
 		return
 	}
 
