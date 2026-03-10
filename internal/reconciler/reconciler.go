@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 func (r *Reconciler) safeReconcile(ctx context.Context) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("reconciler: PANIC recovered: %v", rec)
+			log.Printf("reconciler: PANIC recovered: %v\n%s", rec, string(debug.Stack()))
 		}
 	}()
 	if err := r.reconcileOnce(ctx); err != nil {

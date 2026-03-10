@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"runtime/debug"
 	"path/filepath"
 	"strings"
 	"time"
@@ -64,7 +65,7 @@ func (g *GC) Run(ctx context.Context) {
 func (g *GC) safeCollect(ctx context.Context) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("gc: PANIC recovered: %v", rec)
+			log.Printf("gc: PANIC recovered: %v\n%s", rec, string(debug.Stack()))
 		}
 	}()
 	if err := g.collectOnce(ctx); err != nil {
