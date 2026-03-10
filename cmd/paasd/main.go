@@ -14,6 +14,7 @@ import (
 
 	"github.com/paasd/paasd/internal/api"
 	"github.com/paasd/paasd/internal/db"
+	"github.com/paasd/paasd/internal/docker"
 )
 
 func main() {
@@ -69,6 +70,13 @@ func main() {
 	}
 	defer store.Close()
 
+	// Create Docker client
+	dockerClient, err := docker.NewClient()
+	if err != nil {
+		log.Fatalf("failed to create Docker client: %v", err)
+	}
+	defer dockerClient.Close()
+
 	// Create server
 	srv := api.NewServer(api.ServerConfig{
 		Store:            store,
@@ -76,6 +84,7 @@ func main() {
 		DevMode:          *devMode,
 		BootstrapToken:   bootstrapToken,
 		OpenRegistration: *openRegistration,
+		Docker:           dockerClient,
 	})
 
 	// Default to 127.0.0.1 in ALL modes (loopback only).

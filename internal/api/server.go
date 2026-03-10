@@ -10,8 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/paasd/paasd/internal/db"
+	"github.com/paasd/paasd/internal/docker"
 	"github.com/paasd/paasd/internal/httpx"
 	"github.com/paasd/paasd/internal/middleware"
+	"github.com/paasd/paasd/internal/services"
 )
 
 type ServerConfig struct {
@@ -20,6 +22,7 @@ type ServerConfig struct {
 	DevMode          bool
 	BootstrapToken   string
 	OpenRegistration bool
+	Docker           *docker.Client
 }
 
 type Server struct {
@@ -31,6 +34,7 @@ type Server struct {
 	router           chi.Router
 	authMW           func(http.Handler) http.Handler
 	authInvalidator  *middleware.AuthCacheInvalidator
+	svcManager       *services.Manager
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -40,6 +44,12 @@ func NewServer(cfg ServerConfig) *Server {
 	// Initialize auth middleware and cache invalidator early so they are
 	// guaranteed non-nil before any request can arrive.
 	authMW, authInvalidator := middleware.Auth(cfg.Store.StateDB, cfg.MasterKey)
+
+	var svcMgr *services.Manager
+	if cfg.Docker != nil {
+		svcMgr = services.NewManager(cfg.Store.StateDB, cfg.Docker, cfg.MasterKey)
+	}
+
 	s := &Server{
 		store:            cfg.Store,
 		masterKey:        cfg.MasterKey,
@@ -48,6 +58,7 @@ func NewServer(cfg ServerConfig) *Server {
 		openRegistration: cfg.OpenRegistration,
 		authInvalidator:  authInvalidator,
 		authMW:           authMW,
+		svcManager:       svcMgr,
 	}
 	s.setupRoutes()
 	return s
@@ -102,6 +113,19 @@ func (s *Server) setupRoutes() {
 		r.Post("/v1/auth/keys", s.handleKeyCreate)
 		r.Get("/v1/auth/keys", s.handleKeyList)
 		r.Delete("/v1/auth/keys/{keyID}", s.handleKeyRevoke)
+
+		// Service routes
+		r.Post("/v1/services", s.handleServiceCreate)
+		r.Get("/v1/services", s.handleServiceList)
+		r.Get("/v1/services/{serviceID}", s.handleServiceGet)
+		r.Delete("/v1/services/{serviceID}", s.handleServiceDelete)
+		r.Post("/v1/services/{serviceID}/start", s.handleServiceStart)
+		r.Post("/v1/services/{serviceID}/stop", s.handleServiceStop)
+		r.Post("/v1/services/{serviceID}/restart", s.handleServiceRestart)
+		r.Get("/v1/services/{serviceID}/logs", s.handleServiceLogs)
+		r.Get("/v1/services/{serviceID}/env", s.handleServiceEnvGet)
+		r.Post("/v1/services/{serviceID}/env", s.handleServiceEnvSet)
+		r.Delete("/v1/services/{serviceID}/env/{key}", s.handleServiceEnvDelete)
 	})
 
 	s.router = r
