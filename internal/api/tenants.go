@@ -61,6 +61,7 @@ const (
 	regGlobalPerHour   = 100
 	regMaxEntries      = 10000
 	regWindow          = 1 * time.Hour
+	maxTenants         = 1000
 )
 
 func init() {
@@ -147,6 +148,17 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	if !regLimiter.allow(ip) {
 		w.Header().Set("Retry-After", "3600")
 		http.Error(w, `{"error":"rate limit exceeded, try again later"}`, http.StatusTooManyRequests)
+		return
+	}
+
+	// Enforce max tenant count to prevent DB/disk exhaustion
+	var tenantCount int
+	if err := s.store.StateDB.QueryRow(`SELECT COUNT(*) FROM tenants`).Scan(&tenantCount); err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if tenantCount >= maxTenants {
+		http.Error(w, `{"error":"maximum tenants reached"}`, http.StatusForbidden)
 		return
 	}
 

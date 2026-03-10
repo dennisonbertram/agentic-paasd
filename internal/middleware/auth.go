@@ -2,9 +2,7 @@ package middleware
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,10 +16,8 @@ type contextKey string
 const TenantIDKey contextKey = "tenant_id"
 
 const (
-	lastUsedInterval   = 5 * time.Minute
-	lastUsedMaxKeys    = 10000
-	authFailDelayMinMs = 5
-	authFailDelayMaxMs = 20
+	lastUsedInterval = 5 * time.Minute
+	lastUsedMaxKeys  = 10000
 )
 
 // lastUsedTracker samples last_used_at updates with bounded map.
@@ -86,14 +82,14 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
 				return
 			}
@@ -102,7 +98,7 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 			// Token format: "keyID.secret" for O(1) lookup
 			dotIdx := strings.IndexByte(token, '.')
 			if dotIdx < 1 || dotIdx >= len(token)-1 {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 				return
 			}
@@ -110,7 +106,7 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 			secret := token[dotIdx+1:]
 
 			if len(keyID) > 64 || len(secret) > 256 {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 				return
 			}
@@ -127,19 +123,19 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 				keyID, now,
 			).Scan(&tenantID, &keyHash, &status)
 			if err != nil {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 				return
 			}
 
 			if status != "active" {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 				return
 			}
 
 			if !crypto.VerifyAPIKey(keyHash, secret, masterKey) {
-				jitteredAuthDelay()
+	
 				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 				return
 			}
@@ -157,14 +153,3 @@ func GetTenantID(ctx context.Context) string {
 	return v
 }
 
-// jitteredAuthDelay adds a small random delay (5-20ms) on auth failure
-// to normalize timing without being exploitable for goroutine exhaustion.
-func jitteredAuthDelay() {
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(authFailDelayMaxMs-authFailDelayMinMs)))
-	if err != nil {
-		time.Sleep(time.Duration(authFailDelayMinMs) * time.Millisecond)
-		return
-	}
-	delay := time.Duration(authFailDelayMinMs+int(n.Int64())) * time.Millisecond
-	time.Sleep(delay)
-}
