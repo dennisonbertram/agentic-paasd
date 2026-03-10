@@ -73,7 +73,8 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	keyHash := crypto.HashAPIKey(apiKey, s.masterKey)
-	prefix := apiKey[:8]
+	// Use keyID prefix as the display hint, not the secret's prefix
+	prefix := keyID[:8]
 	now := time.Now().Unix()
 
 	var expiresAt *int64

@@ -46,6 +46,8 @@ func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
+	// chi.Logger logs method/path/status/latency only — never headers or body.
+	// Authorization and bootstrap tokens are never logged.
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(30 * time.Second))

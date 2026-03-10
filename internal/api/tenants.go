@@ -132,12 +132,18 @@ func generateID() (string, error) {
 }
 
 func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
-	// Bootstrap token gate first — reject unauthenticated requests without
-	// consuming rate limit budget. This prevents unauthenticated DoS on the
-	// global rate limit counter.
-	// Open registration (--dev --open-registration) is the only path that
-	// skips this gate. Without that explicit flag, bootstrapToken is always
-	// required (main.go fatals if unset outside dev+open-registration).
+	// Rate limit ALL registration attempts (including invalid tokens) to prevent
+	// brute-force of the bootstrap token. Uses trusted real IP from proxy headers.
+	ip := trustedRealIP(r)
+	if !regLimiter.allow(ip) {
+		w.Header().Set("Retry-After", "3600")
+		http.Error(w, `{"error":"rate limit exceeded, try again later"}`, http.StatusTooManyRequests)
+		return
+	}
+
+	// Bootstrap token gate — open registration (--dev --open-registration) is
+	// the only path that skips this. Without that explicit flag, bootstrapToken
+	// is always required (main.go fatals if unset outside dev+open-registration).
 	if !s.openRegistration {
 		provided := r.Header.Get("X-Bootstrap-Token")
 		// HMAC-compare to prevent length-leak from ConstantTimeCompare
@@ -145,15 +151,6 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-	}
-
-	// Rate limit after token verification — only valid requests consume budget.
-	// Uses trusted real IP (from X-Forwarded-For when behind loopback proxy).
-	ip := trustedRealIP(r)
-	if !regLimiter.allow(ip) {
-		w.Header().Set("Retry-After", "3600")
-		http.Error(w, `{"error":"rate limit exceeded, try again later"}`, http.StatusTooManyRequests)
-		return
 	}
 
 	// Enforce max tenant count to prevent DB/disk exhaustion
@@ -231,7 +228,8 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	keyHash := crypto.HashAPIKey(apiKey, s.masterKey)
-	prefix := apiKey[:8]
+	// Use keyID prefix as display hint, not the secret's prefix
+	prefix := keyID[:8]
 
 	_, err = tx.Exec(
 		`INSERT INTO api_keys (id, tenant_id, name, key_prefix, key_hash, created_at)
