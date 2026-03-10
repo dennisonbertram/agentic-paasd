@@ -58,8 +58,8 @@ var regLimiter = &registrationLimiter{
 }
 
 const (
-	regMaxPerIPPerHour = 10
-	regGlobalPerHour   = 100
+	regMaxPerIPPerHour = 5
+	regGlobalPerHour   = 20
 	regMaxEntries      = 10000
 	regWindow          = 1 * time.Hour
 	maxTenants         = 1000
