@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -52,18 +53,20 @@ type Manager struct {
 	builder  *builder.Builder
 	deployFn DeployFunc
 	logMu    sync.Mutex
-	logSubs  map[string][]chan string // buildID -> subscribers
-	logSizes map[string]int          // buildID -> current log size in bytes
+	buildQueue chan struct{}            // bounded queue for build goroutines
+	logSubs    map[string][]chan string // buildID -> subscribers
+	logSizes   map[string]int          // buildID -> current log size in bytes
 }
 
 // NewManager creates a build manager.
 func NewManager(db *sql.DB, b *builder.Builder, deployFn DeployFunc) *Manager {
 	m := &Manager{
-		db:       db,
-		builder:  b,
-		deployFn: deployFn,
-		logSubs:  make(map[string][]chan string),
-		logSizes: make(map[string]int),
+		db:         db,
+		builder:    b,
+		deployFn:   deployFn,
+		buildQueue: make(chan struct{}, 10), // max 10 queued builds
+		logSubs:    make(map[string][]chan string),
+		logSizes:   make(map[string]int),
 	}
 	// Mark any stale builds from previous process as failed
 	m.reconcileStaleBuilds()
@@ -83,6 +86,30 @@ func (m *Manager) reconcileStaleBuilds() {
 	}
 	if n, _ := result.RowsAffected(); n > 0 {
 		log.Printf("builds: marked %d stale builds as failed on startup", n)
+	}
+}
+
+// cleanupStaleBuildDirs removes build directories not referenced by active builds.
+func (m *Manager) cleanupStaleBuildDirs(workDir string) {
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		// Check if this dir corresponds to an active build
+		var count int
+		m.db.QueryRow(`SELECT COUNT(*) FROM builds WHERE id = ? AND status IN ('pending', 'running')`, e.Name()).Scan(&count)
+		if count == 0 {
+			path := workDir + "/" + e.Name()
+			if err := os.RemoveAll(path); err != nil {
+				log.Printf("builds: failed to cleanup stale dir %s: %v", path, err)
+			} else {
+				log.Printf("builds: cleaned up stale build dir %s", e.Name())
+			}
+		}
 	}
 }
 
@@ -151,6 +178,18 @@ func (m *Manager) StartBuild(ctx context.Context, tenantID, serviceID string, re
 		CreatedAt:  now,
 	}
 
+	// Bounded build queue: reject if too many builds queued
+	select {
+	case m.buildQueue <- struct{}{}:
+	default:
+		// Queue is full, fail the build synchronously
+		m.db.ExecContext(ctx,
+			`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ?`,
+			now, buildID,
+		)
+		return nil, fmt.Errorf("build queue full; try again later")
+	}
+
 	go m.runBuild(buildID, tenantID, serviceID, builder.BuildRequest{
 		BuildID:    buildID,
 		ServiceID:  serviceID,
@@ -165,6 +204,7 @@ func (m *Manager) StartBuild(ctx context.Context, tenantID, serviceID string, re
 }
 
 func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.BuildRequest) {
+	defer func() { <-m.buildQueue }() // release queue slot
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	defer func() {
@@ -175,10 +215,18 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 	}()
 
 	now := time.Now().Unix()
-	m.db.ExecContext(ctx,
-		`UPDATE builds SET status = 'running', started_at = ? WHERE id = ?`,
+	result, dbErr := m.db.ExecContext(ctx,
+		`UPDATE builds SET status = 'running', started_at = ? WHERE id = ? AND status = 'pending'`,
 		now, buildID,
 	)
+	if dbErr != nil {
+		log.Printf("builds: failed to set build %s to running: %v", buildID, dbErr)
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		log.Printf("builds: build %s no longer pending (likely cancelled), aborting", buildID)
+		return
+	}
 
 	logCb := func(line string) {
 		m.appendLog(ctx, buildID, line)
@@ -196,7 +244,7 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 		logCb("[paasd] BUILD FAILED: " + err.Error())
 		log.Printf("build %s failed: %v", buildID, err)
 		if _, dbErr := m.db.ExecContext(finalCtx,
-			`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ?`,
+			`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ? AND status = 'running'`,
 			finishedAt, buildID,
 		); dbErr != nil {
 			log.Printf("builds: failed to mark build %s as failed: %v", buildID, dbErr)
@@ -206,23 +254,25 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 	}
 
 	if _, dbErr := m.db.ExecContext(finalCtx,
-		`UPDATE builds SET status = 'succeeded', finished_at = ? WHERE id = ?`,
+		`UPDATE builds SET status = 'succeeded', finished_at = ? WHERE id = ? AND status = 'running'`,
 		finishedAt, buildID,
 	); dbErr != nil {
 		log.Printf("builds: failed to mark build %s as succeeded: %v", buildID, dbErr)
 	}
-	m.closeLogSubs(buildID)
 
 	// Deploy the built image
 	logCb("[paasd] Deploying built image...")
 	if m.deployFn != nil {
-		if deployErr := m.deployFn(ctx, tenantID, serviceID, req.ImageTag); deployErr != nil {
+		deployCtx, deployCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		if deployErr := m.deployFn(deployCtx, tenantID, serviceID, req.ImageTag); deployErr != nil {
 			log.Printf("build %s succeeded but deploy failed: %v", buildID, deployErr)
 			logCb("[paasd] Deploy failed: " + deployErr.Error())
 		} else {
 			logCb("[paasd] Deploy succeeded")
 		}
+		deployCancel()
 	}
+	m.closeLogSubs(buildID)
 }
 
 func (m *Manager) appendLog(ctx context.Context, buildID, line string) {
