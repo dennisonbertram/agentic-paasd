@@ -20,6 +20,10 @@ type GC struct {
 	interval time.Duration
 }
 
+// minResourceAge is the minimum time a resource must exist before GC considers
+// deleting it. This prevents races with provisioning/deploy operations.
+const minResourceAge = 10 * time.Minute
+
 // New creates a garbage collector with the given interval.
 func New(db *sql.DB, dockerClient *docker.Client, interval time.Duration) *GC {
 	return &GC{
@@ -30,6 +34,7 @@ func New(db *sql.DB, dockerClient *docker.Client, interval time.Duration) *GC {
 }
 
 // Run starts the GC loop. Blocks until ctx is cancelled.
+// Recovers from panics to keep the loop alive.
 func (g *GC) Run(ctx context.Context) {
 	log.Printf("gc: starting (interval=%s)", g.interval)
 	// Delay first run by 2 minutes to let startup settle
@@ -43,9 +48,7 @@ func (g *GC) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Run once immediately after delay
-	if err := g.collectOnce(ctx); err != nil {
-		log.Printf("gc: error: %v", err)
-	}
+	g.safeCollect(ctx)
 
 	for {
 		select {
@@ -53,10 +56,19 @@ func (g *GC) Run(ctx context.Context) {
 			log.Printf("gc: stopped")
 			return
 		case <-ticker.C:
-			if err := g.collectOnce(ctx); err != nil {
-				log.Printf("gc: error: %v", err)
-			}
+			g.safeCollect(ctx)
 		}
+	}
+}
+
+func (g *GC) safeCollect(ctx context.Context) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("gc: PANIC recovered: %v", rec)
+		}
+	}()
+	if err := g.collectOnce(ctx); err != nil {
+		log.Printf("gc: error: %v", err)
 	}
 }
 
@@ -107,28 +119,61 @@ func (g *GC) collectOnce(ctx context.Context) error {
 
 func (g *GC) findOrphanedContainers(ctx context.Context) ([]string, error) {
 	// Get all paasd service containers
-	svcContainers, _ := g.docker.ListContainersByLabel(ctx, "paasd.service", "")
+	svcContainers, err := g.docker.ListContainersByLabel(ctx, "paasd.service", "")
+	if err != nil {
+		return nil, err
+	}
 	// Get all paasd database containers
-	dbContainers, _ := g.docker.ListContainersByLabel(ctx, "paasd.type", "database")
+	dbContainers, err := g.docker.ListContainersByLabel(ctx, "paasd.type", "database")
+	if err != nil {
+		return nil, err
+	}
 
 	var orphaned []string
+	cutoff := time.Now().Add(-minResourceAge)
 
 	// Check service containers
 	for _, id := range svcContainers {
+		// Skip containers younger than minResourceAge to avoid deploy races
+		info, inspectErr := g.docker.InspectContainer(ctx, id)
+		if inspectErr != nil {
+			continue // can't inspect, skip (don't delete what we can't verify)
+		}
+		if info.CreatedAt.After(cutoff) {
+			continue // too new, skip
+		}
+
 		var count int
 		err := g.db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM services WHERE container_id = ?`, id).Scan(&count)
-		if err != nil || count == 0 {
+		if err != nil {
+			// DB error — do NOT treat as orphaned. Log and skip.
+			log.Printf("gc: DB error checking container %s, skipping: %v", id[:12], err)
+			continue
+		}
+		if count == 0 {
 			orphaned = append(orphaned, id)
 		}
 	}
 
 	// Check database containers
 	for _, id := range dbContainers {
+		info, inspectErr := g.docker.InspectContainer(ctx, id)
+		if inspectErr != nil {
+			continue
+		}
+		if info.CreatedAt.After(cutoff) {
+			continue
+		}
+
 		var count int
 		err := g.db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM databases WHERE container_id = ?`, id).Scan(&count)
-		if err != nil || count == 0 {
+		if err != nil {
+			log.Printf("gc: DB error checking database container %s, skipping: %v", id[:12], err)
+			continue
+		}
+		if count == 0 {
 			orphaned = append(orphaned, id)
 		}
 	}
@@ -147,7 +192,12 @@ func (g *GC) findOrphanedVolumes(ctx context.Context) ([]string, error) {
 		var count int
 		err := g.db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM databases WHERE volume_name = ?`, name).Scan(&count)
-		if err != nil || count == 0 {
+		if err != nil {
+			// DB error — do NOT treat as orphaned. Log and skip.
+			log.Printf("gc: DB error checking volume %s, skipping: %v", name, err)
+			continue
+		}
+		if count == 0 {
 			orphaned = append(orphaned, name)
 		}
 	}
@@ -167,7 +217,6 @@ func (g *GC) cleanOldBuildDirs(basePath string, maxAge time.Duration) int {
 		if !entry.IsDir() {
 			continue
 		}
-		// Skip hidden dirs
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}

@@ -40,6 +40,7 @@ func (c *Client) Close() error {
 
 // ContainerInfo holds inspected container state.
 type ContainerInfo struct {
+	CreatedAt time.Time
 	Status    string
 	StartedAt string
 	ExitCode  int
@@ -269,7 +270,9 @@ func (c *Client) InspectContainer(ctx context.Context, containerID string) (*Con
 	if err != nil {
 		return nil, fmt.Errorf("inspect container: %w", err)
 	}
+	created, _ := time.Parse(time.RFC3339Nano, info.Created)
 	return &ContainerInfo{
+		CreatedAt: created,
 		Status:    strings.ToLower(info.State.Status),
 		StartedAt: info.State.StartedAt,
 		ExitCode:  info.State.ExitCode,

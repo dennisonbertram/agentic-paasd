@@ -113,7 +113,7 @@ func (s *Server) buildDetailedHealth() DetailedHealthResponse {
 
 	// Check disk (no exec, safe syscall)
 	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/", &stat); err == nil {
+	if err := syscall.Statfs("/var/lib/paasd", &stat); err == nil {
 		totalBytes := stat.Blocks * uint64(stat.Bsize)
 		freeBytes := stat.Bavail * uint64(stat.Bsize)
 		totalGB := float64(totalBytes) / (1024 * 1024 * 1024)

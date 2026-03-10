@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/paasd/paasd/internal/crypto"
+	"github.com/paasd/paasd/internal/diskcheck"
 	"github.com/paasd/paasd/internal/docker"
 )
 
@@ -278,6 +279,17 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 		return err
 	}
 
+	if svc.CircuitOpen {
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", "circuit breaker is open")
+		return fmt.Errorf("circuit breaker is open: service has crashed too many times; use POST /reset to clear")
+	}
+
+	// Check disk space before deploy
+	if err := diskcheck.Check("/var/lib/paasd", 80, 90); err != nil {
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", err.Error())
+		return fmt.Errorf("disk check: %w", err)
+	}
+
 	m.updateStatusScoped(ctx, tenantID, serviceID, "deploying")
 
 	// Ensure per-tenant network exists for isolation
@@ -392,6 +404,9 @@ func (m *Manager) Start(ctx context.Context, tenantID, serviceID string) error {
 	if err != nil {
 		return err
 	}
+	if svc.CircuitOpen {
+		return fmt.Errorf("circuit breaker is open: service has crashed too many times; use POST /reset to clear")
+	}
 	if svc.ContainerID == "" {
 		return fmt.Errorf("service has no container")
 	}
@@ -408,6 +423,9 @@ func (m *Manager) Restart(ctx context.Context, tenantID, serviceID string) error
 	svc, err := m.getOwned(ctx, tenantID, serviceID)
 	if err != nil {
 		return err
+	}
+	if svc.CircuitOpen {
+		return fmt.Errorf("circuit breaker is open: service has crashed too many times; use POST /reset to clear")
 	}
 	if svc.ContainerID == "" {
 		return fmt.Errorf("service has no container")
@@ -676,13 +694,19 @@ func (m *Manager) updateStatusWithErrorScoped(ctx context.Context, tenantID, ser
 
 // ResetCircuitBreaker resets the circuit breaker for a service, allowing it to restart.
 func (m *Manager) ResetCircuitBreaker(ctx context.Context, tenantID, serviceID string) error {
-	_, err := m.getOwned(ctx, tenantID, serviceID)
+	svc, err := m.getOwned(ctx, tenantID, serviceID)
 	if err != nil {
 		return err
 	}
+
+	// If container is still running, stop it before resetting
+	if svc.ContainerID != "" {
+		_ = m.docker.StopContainer(ctx, svc.ContainerID)
+	}
+
 	_, err = m.db.ExecContext(ctx,
 		`UPDATE services SET crash_count = 0, circuit_open = 0, status = 'stopped',
-		 updated_at = ? WHERE id = ? AND tenant_id = ?`,
+		 last_error = '', updated_at = ? WHERE id = ? AND tenant_id = ?`,
 		time.Now().Unix(), serviceID, tenantID)
 	if err != nil {
 		return fmt.Errorf("reset circuit breaker: %w", err)

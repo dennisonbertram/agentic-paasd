@@ -4,8 +4,8 @@ package reconciler
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/paasd/paasd/internal/docker"
@@ -28,6 +28,7 @@ func New(db *sql.DB, dockerClient *docker.Client, interval time.Duration) *Recon
 }
 
 // Run starts the reconciliation loop. Blocks until ctx is cancelled.
+// Recovers from panics to keep the loop alive.
 func (r *Reconciler) Run(ctx context.Context) {
 	log.Printf("reconciler: starting (interval=%s)", r.interval)
 	ticker := time.NewTicker(r.interval)
@@ -39,31 +40,34 @@ func (r *Reconciler) Run(ctx context.Context) {
 			log.Printf("reconciler: stopped")
 			return
 		case <-ticker.C:
-			if err := r.reconcileOnce(ctx); err != nil {
-				log.Printf("reconciler: error: %v", err)
-			}
+			r.safeReconcile(ctx)
 		}
 	}
 }
 
+func (r *Reconciler) safeReconcile(ctx context.Context) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("reconciler: PANIC recovered: %v", rec)
+		}
+	}()
+	if err := r.reconcileOnce(ctx); err != nil {
+		log.Printf("reconciler: error: %v", err)
+	}
+}
+
 func (r *Reconciler) reconcileOnce(ctx context.Context) error {
-	// Get all paasd containers from Docker
-	containers, err := r.docker.ListContainersByLabel(ctx, "paasd.tenant", "")
+	// Get all paasd containers from Docker using the tenant label,
+	// which is set on BOTH service and database containers.
+	containerIDs, err := r.docker.ListContainersByLabel(ctx, "paasd.tenant", "")
 	if err != nil {
-		return err
+		return fmt.Errorf("list paasd containers: %w", err)
 	}
 
-	// Build a set of running container IDs for fast lookup
-	// We need full container info, not just IDs filtered by value
-	allContainers, err := r.listAllPaasdContainers(ctx)
-	if err != nil {
-		return err
-	}
-	containerSet := make(map[string]bool, len(allContainers))
-	for _, id := range allContainers {
+	containerSet := make(map[string]bool, len(containerIDs))
+	for _, id := range containerIDs {
 		containerSet[id] = true
 	}
-	_ = containers // unused, we use allContainers instead
 
 	var checked, fixed int
 
@@ -89,30 +93,41 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 	for _, s := range runningServices {
 		checked++
 		if !containerSet[s.containerID] {
-			now := time.Now().Unix()
-			// Increment crash count and check circuit breaker
-			var crashCount int
-			var lastCrashedAt sql.NullInt64
-			r.db.QueryRowContext(ctx,
-				`SELECT crash_count, last_crashed_at FROM services WHERE id = ?`, s.id,
-			).Scan(&crashCount, &lastCrashedAt)
-
-			crashCount++
-			circuitOpen := 0
-			// If 5+ crashes within 10 minutes, open circuit breaker
-			if crashCount >= 5 && lastCrashedAt.Valid && (now-lastCrashedAt.Int64) < 600 {
-				circuitOpen = 1
-				log.Printf("reconciler: service %s circuit breaker OPEN (crash_count=%d)", s.id, crashCount)
+			// Double-check with a direct inspect to avoid transient list misses
+			_, inspectErr := r.docker.InspectContainer(ctx, s.containerID)
+			if inspectErr == nil {
+				// Container actually exists, skip
+				continue
 			}
 
-			_, err := r.db.ExecContext(ctx,
-				`UPDATE services SET status = 'crashed', crash_count = ?, circuit_open = ?,
-				 last_crashed_at = ?, last_error = 'container not found by reconciler',
-				 updated_at = ? WHERE id = ?`,
-				crashCount, circuitOpen, now, now, s.id)
+			now := time.Now().Unix()
+			// Atomic circuit breaker: reset crash_count if last crash is outside
+			// the 10min window, otherwise increment. Open circuit at 5 crashes.
+			_, err := r.db.ExecContext(ctx, `
+				UPDATE services SET
+					status = 'crashed',
+					crash_count = CASE
+						WHEN last_crashed_at IS NULL OR (? - last_crashed_at) >= 600 THEN 1
+						ELSE crash_count + 1
+					END,
+					circuit_open = CASE
+						WHEN last_crashed_at IS NOT NULL AND (? - last_crashed_at) < 600 AND crash_count + 1 >= 5 THEN 1
+						ELSE circuit_open
+					END,
+					last_crashed_at = ?,
+					last_error = 'container not found by reconciler',
+					updated_at = ?
+				WHERE id = ?`,
+				now, now, now, now, s.id)
 			if err != nil {
 				log.Printf("reconciler: failed to mark service %s as crashed: %v", s.id, err)
 			} else {
+				// Check if circuit was opened
+				var circuitOpen int
+				r.db.QueryRowContext(ctx, `SELECT circuit_open FROM services WHERE id = ?`, s.id).Scan(&circuitOpen)
+				if circuitOpen == 1 {
+					log.Printf("reconciler: service %s circuit breaker OPEN", s.id)
+				}
 				log.Printf("reconciler: service %s marked crashed (container %s not found)", s.id, s.containerID[:12])
 				fixed++
 			}
@@ -153,6 +168,11 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 		for _, d := range readyDBs {
 			checked++
 			if !containerSet[d.containerID] {
+				// Double-check with inspect
+				_, inspectErr := r.docker.InspectContainer(ctx, d.containerID)
+				if inspectErr == nil {
+					continue
+				}
 				_, err := r.db.ExecContext(ctx,
 					`UPDATE databases SET status = 'unavailable', updated_at = ? WHERE id = ?`,
 					time.Now().Unix(), d.id)
@@ -171,38 +191,4 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// listAllPaasdContainers returns IDs of all containers with any paasd label.
-func (r *Reconciler) listAllPaasdContainers(ctx context.Context) ([]string, error) {
-	// Use docker CLI to list containers with paasd labels
-	// The docker SDK ListContainersByLabel requires an exact value match,
-	// so we list all containers and filter by label prefix
-	ids, err := r.docker.ListContainersByLabel(ctx, "paasd.managed", "true")
-	if err != nil && !strings.Contains(err.Error(), "not found") {
-		// Try alternate label
-		ids2, err2 := r.docker.ListContainersByLabel(ctx, "paasd.tenant", "")
-		if err2 != nil {
-			return nil, err
-		}
-		ids = ids2
-	}
-
-	// Also get database containers
-	dbIDs, _ := r.docker.ListContainersByLabel(ctx, "paasd.type", "database")
-
-	// Merge into set
-	idSet := make(map[string]bool)
-	for _, id := range ids {
-		idSet[id] = true
-	}
-	for _, id := range dbIDs {
-		idSet[id] = true
-	}
-
-	result := make([]string, 0, len(idSet))
-	for id := range idSet {
-		result = append(result, id)
-	}
-	return result, nil
 }

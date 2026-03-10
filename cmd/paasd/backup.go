@@ -41,18 +41,49 @@ func backupFile(src, dst string) error {
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	// Write to temp file, then atomic rename to final path
+	tmpDst := dst + ".tmp"
+	out, err := os.Create(tmpDst)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", dst, err)
+		return fmt.Errorf("create temp %s: %w", tmpDst, err)
 	}
-	defer out.Close()
 
 	gz := gzip.NewWriter(out)
-	defer gz.Close()
 
-	n, err := io.Copy(gz, in)
-	if err != nil {
-		return fmt.Errorf("compress: %w", err)
+	n, copyErr := io.Copy(gz, in)
+
+	// Close gzip writer first (flushes + writes footer)
+	if err := gz.Close(); err != nil {
+		out.Close()
+		os.Remove(tmpDst)
+		if copyErr != nil {
+			return fmt.Errorf("compress: %w", copyErr)
+		}
+		return fmt.Errorf("finalize gzip: %w", err)
+	}
+
+	if copyErr != nil {
+		out.Close()
+		os.Remove(tmpDst)
+		return fmt.Errorf("compress: %w", copyErr)
+	}
+
+	// Sync to disk for durability
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmpDst)
+		return fmt.Errorf("sync: %w", err)
+	}
+
+	if err := out.Close(); err != nil {
+		os.Remove(tmpDst)
+		return fmt.Errorf("close: %w", err)
+	}
+
+	// Atomic rename — no partial file at final path
+	if err := os.Rename(tmpDst, dst); err != nil {
+		os.Remove(tmpDst)
+		return fmt.Errorf("rename: %w", err)
 	}
 
 	log.Printf("backed up %s → %s (%.1f KB)", filepath.Base(src), filepath.Base(dst), float64(n)/1024)
