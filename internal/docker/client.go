@@ -363,6 +363,7 @@ func (c *Client) RunDatabase(ctx context.Context, cfg RunDatabaseConfig) (string
 	portStr := fmt.Sprintf("%d/tcp", cfg.ContainerPort)
 
 	hostCfg := &container.HostConfig{
+		Runtime: "runsc",
 		PortBindings: nat.PortMap{
 			nat.Port(portStr): []nat.PortBinding{
 				{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", cfg.HostPort)},
