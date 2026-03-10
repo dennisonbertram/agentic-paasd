@@ -82,6 +82,22 @@ func NewManager(db *sql.DB, docker *docker.Client, masterKey []byte) *Manager {
 	}
 }
 
+// checkTenantActive verifies the tenant is not suspended/deleted.
+// Returns an error if tenant is not in active state.
+func (m *Manager) checkTenantActive(ctx context.Context, tenantID string) error {
+	var status string
+	err := m.db.QueryRowContext(ctx,
+		`SELECT status FROM tenants WHERE id = ?`, tenantID,
+	).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("tenant not found")
+	}
+	if status != "active" {
+		return fmt.Errorf("tenant is %s", status)
+	}
+	return nil
+}
+
 // ValidateImage checks that an image reference is allowed.
 func ValidateImage(img string) error {
 	if img == "" {
@@ -124,6 +140,9 @@ func ValidateEnvVars(vars map[string]string) error {
 // Create inserts a new service record (status=created, not yet running).
 // Enforces tenant quota (max_services).
 func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest) (*Service, error) {
+	if err := m.checkTenantActive(ctx, tenantID); err != nil {
+		return nil, err
+	}
 	if err := ValidateImage(req.Image); err != nil {
 		return nil, err
 	}
@@ -196,6 +215,10 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 // Deploy pulls the image, reads env vars, creates and starts the container.
 // Uses a bounded semaphore with a bounded queue for backpressure.
 func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error {
+	if err := m.checkTenantActive(ctx, tenantID); err != nil {
+		m.updateStatus(ctx, serviceID, "failed")
+		return err
+	}
 	// Try to enter the deploy queue; reject immediately if full (backpressure)
 	select {
 	case m.deployQueue <- struct{}{}:
@@ -270,11 +293,13 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 
 // getResourceLimits reads per-service resource limits from tenant quotas.
 func (m *Manager) getResourceLimits(ctx context.Context, tenantID string) *docker.ResourceLimits {
-	var maxMemMB, maxCPUCores int
+	var maxMemMB int
+	var maxCPUCores float64
 	err := m.db.QueryRowContext(ctx,
 		`SELECT max_memory_mb, max_cpu_cores FROM tenant_quotas WHERE tenant_id = ?`, tenantID,
 	).Scan(&maxMemMB, &maxCPUCores)
 	if err != nil {
+		log.Printf("services: failed to load resource limits for tenant %s: %v (using defaults)", tenantID, err)
 		return nil // use defaults
 	}
 	limits := &docker.ResourceLimits{}
@@ -282,7 +307,7 @@ func (m *Manager) getResourceLimits(ctx context.Context, tenantID string) *docke
 		limits.MemoryMB = int64(maxMemMB)
 	}
 	if maxCPUCores > 0 {
-		limits.CPUCores = float64(maxCPUCores)
+		limits.CPUCores = maxCPUCores
 	}
 	return limits
 }
@@ -306,6 +331,9 @@ func (m *Manager) Stop(ctx context.Context, tenantID, serviceID string) error {
 
 // Start starts a stopped service container.
 func (m *Manager) Start(ctx context.Context, tenantID, serviceID string) error {
+	if err := m.checkTenantActive(ctx, tenantID); err != nil {
+		return err
+	}
 	svc, err := m.getOwned(ctx, tenantID, serviceID)
 	if err != nil {
 		return err

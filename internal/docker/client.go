@@ -6,22 +6,17 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 )
 
 // Client wraps the Docker Engine API client with paasd-specific defaults.
 type Client struct {
 	cli *client.Client
-	// portAlloc tracks next host port to prevent collisions
-	portMu   sync.Mutex
-	nextPort int
 }
 
 // NewClient creates a Docker API client using the default socket.
@@ -30,7 +25,7 @@ func NewClient() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &Client{cli: cli, nextPort: 10000}, nil
+	return &Client{cli: cli}, nil
 }
 
 // Close releases the Docker client resources.
@@ -56,12 +51,13 @@ func (c *Client) EnsureNetwork(ctx context.Context, name string) (string, error)
 			return n.ID, nil
 		}
 	}
+	// Internal bridge with ICC disabled:
+	// - Internal: no outbound internet access from containers
+	// - ICC disabled: containers on the same bridge cannot communicate with each other
+	// - Traefik is connected to this network for ingress routing
 	resp, err := c.cli.NetworkCreate(ctx, name, network.CreateOptions{
-		Driver: "bridge",
-		// NOT Internal — internal networks block port publishing to host.
-		// Instead, disable inter-container communication (ICC) via driver options.
-		// This prevents containers on the same bridge from reaching each other
-		// while allowing port publication to 127.0.0.1 for Traefik routing.
+		Driver:   "bridge",
+		Internal: true,
 		Options: map[string]string{
 			"com.docker.network.bridge.enable_icc": "false",
 		},
@@ -88,27 +84,16 @@ type ResourceLimits struct {
 	CPUCores float64
 }
 
-// allocateHostPort returns the next available host port for loopback binding.
-// Port range 10000-60000 to avoid conflicts with system services.
-func (c *Client) allocateHostPort() int {
-	c.portMu.Lock()
-	defer c.portMu.Unlock()
-	port := c.nextPort
-	c.nextPort++
-	if c.nextPort > 60000 {
-		c.nextPort = 10000
-	}
-	return port
-}
-
 // RunContainer creates and starts a container with gVisor runtime.
 //
 // Network isolation architecture:
-//   - Container is placed on a per-tenant internal Docker network (no external access).
-//   - Container port is published to 127.0.0.1:<hostPort> ONLY (loopback binding).
-//   - Traefik (running on host network) routes to 127.0.0.1:<hostPort> via URL label.
-//   - Traefik NEVER joins any tenant Docker network — no L2 adjacency with workloads.
-//   - Tenant containers cannot reach Traefik, the host, or other tenants via Docker networking.
+//   - Container is placed on a per-tenant internal Docker network (Internal=true, ICC=false).
+//   - Internal network blocks all outbound internet access from containers.
+//   - ICC=false prevents containers on the same tenant bridge from communicating.
+//   - Traefik is connected to each per-tenant network for ingress routing.
+//   - Cross-tenant isolation: each tenant has a separate bridge network.
+//   - Defense-in-depth: gVisor (runsc) runtime, CapDrop ALL, no-new-privileges,
+//     ReadonlyRootfs, PidsLimit, MemorySwap=Memory (no swap).
 func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img string, port int, envVars map[string]string, extraLabels map[string]string, limits *ResourceLimits) (string, error) {
 	name := containerName(tenantID, serviceID)
 
@@ -121,15 +106,11 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 		port = 8000
 	}
 
-	// Allocate a unique host port for loopback binding
-	hostPort := c.allocateHostPort()
-
 	labels := map[string]string{
 		"traefik.enable": "true",
-		fmt.Sprintf("traefik.http.routers.%s.rule", serviceID):        fmt.Sprintf("Host(`%s.localhost`)", serviceID),
-		fmt.Sprintf("traefik.http.routers.%s.entrypoints", serviceID): "web",
-		// Traefik routes to loopback published port — no shared network needed
-		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.url", serviceID): fmt.Sprintf("http://127.0.0.1:%d", hostPort),
+		fmt.Sprintf("traefik.http.routers.%s.rule", serviceID):                     fmt.Sprintf("Host(`%s.localhost`)", serviceID),
+		fmt.Sprintf("traefik.http.routers.%s.entrypoints", serviceID):              "web",
+		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", serviceID): fmt.Sprintf("%d", port),
 		"paasd.tenant":  tenantID,
 		"paasd.service": serviceID,
 	}
@@ -151,14 +132,6 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 		}
 	}
 
-	// Publish container port to 127.0.0.1 only — Traefik on host network routes here
-	containerPort := nat.Port(fmt.Sprintf("%d/tcp", port))
-	portBindings := nat.PortMap{
-		containerPort: []nat.PortBinding{
-			{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", hostPort)},
-		},
-	}
-
 	hostCfg := &container.HostConfig{
 		Runtime: "runsc",
 		Resources: container.Resources{
@@ -171,7 +144,6 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 		NetworkMode:    container.NetworkMode(tenantNet),
 		CapDrop:        []string{"ALL"},
 		SecurityOpt:    []string{"no-new-privileges"},
-		PortBindings:   portBindings,
 		ReadonlyRootfs: true,
 		Tmpfs: map[string]string{
 			"/tmp":     "rw,noexec,nosuid,size=64m",
@@ -181,10 +153,9 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 
 	resp, err := c.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:        img,
-			Env:          env,
-			Labels:       labels,
-			ExposedPorts: nat.PortSet{containerPort: struct{}{}},
+			Image:  img,
+			Env:    env,
+			Labels: labels,
 		},
 		hostCfg,
 		&network.NetworkingConfig{},
@@ -193,6 +164,17 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 	)
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
+	}
+
+	// Connect Traefik to the per-tenant network for ingress routing.
+	// This is idempotent — Docker ignores if already connected.
+	// Note: Traefik gains L2 adjacency with tenant containers, but this is
+	// standard for Docker+Traefik deployments. The primary isolation boundaries
+	// are: gVisor runtime (syscall interception), CapDrop ALL, no-new-privileges,
+	// internal network (no outbound), ICC disabled (no inter-container comms).
+	traefikID, findErr := c.findTraefikContainer(ctx)
+	if findErr == nil && traefikID != "" {
+		_ = c.cli.NetworkConnect(ctx, tenantNet, traefikID, nil)
 	}
 
 	if err := c.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
@@ -204,6 +186,25 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+// findTraefikContainer finds the Traefik container by image or name.
+func (c *Client) findTraefikContainer(ctx context.Context) (string, error) {
+	containers, err := c.cli.ContainerList(ctx, container.ListOptions{All: false})
+	if err != nil {
+		return "", err
+	}
+	for _, ctr := range containers {
+		if strings.Contains(ctr.Image, "traefik") {
+			return ctr.ID, nil
+		}
+		for _, name := range ctr.Names {
+			if strings.Contains(name, "traefik") {
+				return ctr.ID, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("traefik container not found")
+}
 
 // StopContainer stops a running container with a 10s timeout.
 func (c *Client) StopContainer(ctx context.Context, containerID string) error {
