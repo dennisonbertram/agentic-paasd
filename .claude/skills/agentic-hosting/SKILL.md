@@ -7,6 +7,162 @@ description: Operate an agentic-hosting self-hosted PaaS server via REST API. Us
 
 agentic-hosting is an agentic-first self-hosted PaaS. You operate it entirely via REST API — no web dashboard. This skill gives you everything needed to deploy apps, provision databases, and manage services.
 
+## Server Setup
+
+Use this section when bootstrapping `ah` on a fresh Linux server from scratch. Skip to **Setup (do this first)** if the server is already running.
+
+### Prerequisites
+
+- Ubuntu 20.04+ or Debian 11+
+- Root or sudo access
+- Ports 80, 443 open in firewall
+
+### 1. Install Dependencies
+
+```bash
+# Docker
+curl -fsSL https://get.docker.com | sh
+systemctl enable --now docker
+
+# Go 1.22+
+wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/go.sh
+source /etc/profile.d/go.sh
+
+# gVisor (runsc)
+curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" > /etc/apt/sources.list.d/gvisor.list
+apt-get update && apt-get install -y runsc
+runsc install
+
+# Nixpacks
+curl -sSL https://nixpacks.com/install.sh | bash
+```
+
+### 2. Clone and Build
+
+```bash
+cd /opt
+git clone https://github.com/dennisonbertram/agentic-hosting
+cd agentic-hosting
+CGO_ENABLED=1 go build -o /usr/local/bin/ah ./cmd/ah/
+```
+
+### 3. Generate Secrets
+
+```bash
+# Master key (hex)
+mkdir -p /var/lib/ah
+openssl rand -hex 32 > /var/lib/ah/master.key
+
+# Bootstrap token
+BOOTSTRAP_TOKEN=$(openssl rand -hex 24)
+echo "AH_BOOTSTRAP_TOKEN=$BOOTSTRAP_TOKEN" > /etc/default/ah
+echo "Save this token: $BOOTSTRAP_TOKEN"
+```
+
+**Save the bootstrap token immediately — it cannot be recovered.**
+
+### 4. Set Up Data Directory
+
+```bash
+mkdir -p /var/lib/ah
+```
+
+### 5. Create Systemd Service
+
+Create `/etc/systemd/system/ah.service`:
+
+```ini
+[Unit]
+Description=agentic-hosting daemon
+After=docker.service
+Requires=docker.service
+
+[Service]
+EnvironmentFile=/etc/default/ah
+ExecStart=/usr/local/bin/ah --port 8080 --db-path /var/lib/ah/ah.db --master-key-path /var/lib/ah/master.key --dev
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now ah
+```
+
+### 6. Start Traefik and Local Registry
+
+```bash
+# Create traefik-public network
+docker network create traefik-public
+
+# Local registry
+docker run -d --name paas-registry \
+  --restart=unless-stopped \
+  -p 127.0.0.1:5000:5000 \
+  registry:2
+
+# Traefik (create /etc/traefik/traefik.yml first — see docs)
+mkdir -p /etc/traefik/dynamic /etc/traefik/certs
+touch /etc/traefik/certs/acme.json && chmod 600 /etc/traefik/certs/acme.json
+
+docker run -d --name paas-traefik \
+  --restart=unless-stopped \
+  --network traefik-public \
+  -p 80:80 -p 443:443 -p 8090:8080 \
+  -v /etc/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
+  -v /etc/traefik/dynamic:/etc/traefik/dynamic:ro \
+  -v /etc/traefik/certs:/etc/traefik/certs \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  traefik:latest
+```
+
+### 7. Verify
+
+```bash
+curl -s http://localhost:8080/v1/system/health
+# → {"status":"ok"}
+```
+
+### 8. Register First Tenant and Get API Key
+
+```bash
+curl -X POST http://localhost:8080/v1/tenants/register \
+  -H "X-Bootstrap-Token: $BOOTSTRAP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-app","email":"me@example.com"}'
+# → {"tenant_id":"ten_...","api_key":"keyid.secret"}
+```
+
+### After Setup — Output to User
+
+Once bootstrap is complete, output:
+
+```
+✓ agentic-hosting is running on <server-ip>
+
+Add to your shell profile:
+  export AH_URL=http://<server-ip>:8080
+  export AH_KEY=<api-key>
+
+Then run: /status
+```
+
+### Important Notes for Claude
+
+- Always save the bootstrap token before proceeding — it cannot be recovered
+- The master key at `/var/lib/ah/master.key` must be backed up — losing it means losing all encrypted DB credentials
+- gVisor path is `/usr/bin/runsc` after `runsc install` (verify with `which runsc`)
+- If Docker version is 29+, use `traefik:latest` not a pinned v3.x version
+- Port 8080 is loopback-only by default — expose via Traefik for external access
+
+---
+
 ## Setup (do this first)
 
 Before using any ah commands, ensure you have:
