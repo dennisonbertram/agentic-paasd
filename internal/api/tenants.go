@@ -153,17 +153,6 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enforce max tenant count to prevent DB/disk exhaustion (only count active tenants)
-	var tenantCount int
-	if err := s.store.StateDB.QueryRow(`SELECT COUNT(*) FROM tenants WHERE status = 'active'`).Scan(&tenantCount); err != nil {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
-	}
-	if tenantCount >= maxTenants {
-		http.Error(w, `{"error":"maximum tenants reached"}`, http.StatusForbidden)
-		return
-	}
-
 	var req RegisterRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -185,6 +174,18 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Email) > 256 {
 		http.Error(w, `{"error":"email too long"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Enforce max tenant count AFTER input validation to minimize DB load
+	// from malformed requests. Only counts active tenants.
+	var tenantCount int
+	if err := s.store.StateDB.QueryRow(`SELECT COUNT(*) FROM tenants WHERE status = 'active'`).Scan(&tenantCount); err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if tenantCount >= maxTenants {
+		http.Error(w, `{"error":"maximum tenants reached"}`, http.StatusForbidden)
 		return
 	}
 

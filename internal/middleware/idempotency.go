@@ -112,8 +112,10 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rec, r)
 
-		// Only store if within bounds
-		if len(rec.body) <= maxIdempotencyBodyLen {
+		// Only cache successful (2xx) responses within size bounds.
+		// Error responses are not cached to prevent "sticky failure" attacks
+		// where an attacker pins error responses for a chosen idempotency key.
+		if rec.statusCode >= 200 && rec.statusCode < 300 && len(rec.body) <= maxIdempotencyBodyLen {
 			s.mu.Lock()
 			// Enforce max entries - evict oldest if at capacity
 			if len(s.entries) >= maxIdempotencyEntries {
