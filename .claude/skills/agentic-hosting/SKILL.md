@@ -1,11 +1,11 @@
 ---
-name: paasd
-description: Operate a paasd self-hosted PaaS server via REST API. Use when deploying apps, provisioning databases, managing services, or troubleshooting on a paasd instance.
+name: agentic-hosting
+description: Operate an agentic-hosting self-hosted PaaS server via REST API. Use when deploying apps, provisioning databases, managing services, or troubleshooting on an agentic-hosting instance.
 ---
 
-# paasd Operator Skill
+# agentic-hosting Operator Skill
 
-paasd is an agentic-first self-hosted PaaS. You operate it entirely via REST API — no web dashboard. This skill gives you everything needed to deploy apps, provision databases, and manage services.
+agentic-hosting is an agentic-first self-hosted PaaS. You operate it entirely via REST API — no web dashboard. This skill gives you everything needed to deploy apps, provision databases, and manage services.
 
 ## Setup (do this first)
 

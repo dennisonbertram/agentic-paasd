@@ -1,12 +1,12 @@
 ---
-description: Provision a Postgres or Redis database and wire it to a service. Usage: /paasd-db <service-name> <postgres|redis> [db-name]
+description: Provision a Postgres or Redis database and wire it to a service. Usage: /db <service-name> <postgres|redis> [db-name]
 argument-hint: <service-name> <postgres|redis> [db-name]
 allowed-tools: Bash
 ---
 
-Provision a `$2` database named `${3:-$1-db}` and wire it to service `$1` on paasd.
+Provision a `$2` database named `${3:-$1-db}` and wire it to service `$1` on agentic-hosting.
 
-You are a paasd operator using `$PAASD_URL` and `$PAASD_KEY`.
+You are an agentic-hosting operator using `$PAASD_URL` and `$PAASD_KEY`.
 
 Steps:
 1. Find the service by name: `GET /v1/services` — filter by name == `$1`, get its ID. If not found, tell the user.

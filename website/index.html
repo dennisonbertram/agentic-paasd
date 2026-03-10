@@ -238,7 +238,7 @@
       <div class="dot dot-r"></div>
       <div class="dot dot-y"></div>
       <div class="dot dot-g"></div>
-      <div class="terminal-title">paasd quickstart</div>
+      <div class="terminal-title">agentic-hosting quickstart</div>
     </div>
     <div class="terminal-body">
       <div class="cmd">curl -X POST $BASE_URL/v1/tenants/register \</div>
@@ -311,16 +311,16 @@
     </div>
     <div class="terminal-body">
       <div class="cmd" style="color:#888"># Install the skill</div>
-      <div class="cmd">cp .claude/skills/paasd/SKILL.md ~/.claude/skills/paasd/</div>
+      <div class="cmd">cp .claude/skills/agentic-hosting/SKILL.md ~/.claude/skills/agentic-hosting/</div>
       <div class="out">&nbsp;</div>
       <div class="cmd" style="color:#888"># Then use slash commands in Claude Code</div>
-      <div class="cmd">/paasd-deploy https://github.com/org/app web 3000</div>
+      <div class="cmd">/deploy https://github.com/org/app web 3000</div>
       <div class="out"><span class="hi">✓</span> Building with Nixpacks... deploying... <span class="hi">running</span></div>
       <div class="out">&nbsp;</div>
-      <div class="cmd">/paasd-db web postgres</div>
+      <div class="cmd">/db web postgres</div>
       <div class="out"><span class="hi">✓</span> Postgres provisioned → DATABASE_URL set → service restarted</div>
       <div class="out">&nbsp;</div>
-      <div class="cmd">/paasd-status</div>
+      <div class="cmd">/status</div>
       <div class="out">Disk: 24%  Docker: ok  gVisor: ok</div>
       <div class="out"><span class="hi">✓</span> web &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;running</div>
       <div class="out"><span class="hi">✓</span> web-postgres &nbsp;&nbsp;&nbsp;running</div>
@@ -330,22 +330,22 @@
   <div class="grid" style="margin-bottom:4rem">
     <div class="card">
       <div class="card-icon">🤖</div>
-      <h3>/paasd-deploy</h3>
+      <h3>/deploy</h3>
       <p>Deploy from a git URL (Nixpacks build) or Docker image. Streams build logs in real time.</p>
     </div>
     <div class="card">
       <div class="card-icon">📊</div>
-      <h3>/paasd-status</h3>
+      <h3>/status</h3>
       <p>Full dashboard — disk usage, all services, databases, and circuit breaker state.</p>
     </div>
     <div class="card">
       <div class="card-icon">🗄️</div>
-      <h3>/paasd-db</h3>
+      <h3>/db</h3>
       <p>Provision Postgres or Redis, fetch the connection string, and wire it to a service automatically.</p>
     </div>
     <div class="card">
       <div class="card-icon">📋</div>
-      <h3>/paasd-logs</h3>
+      <h3>/logs</h3>
       <p>Stream build logs for any service by name. No IDs to look up.</p>
     </div>
   </div>

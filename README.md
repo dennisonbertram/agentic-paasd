@@ -336,18 +336,18 @@ PAASD_BOOTSTRAP_TOKEN=dev-token-32-chars-minimum make run
 
 ## Claude Code Integration
 
-paasd ships with a Claude Code skill, slash commands, and bash scripts for operating the API without writing curl commands manually.
+agentic-hosting ships with a Claude Code skill, slash commands, and bash scripts for operating the API without writing curl commands manually.
 
 ### Install the Skill
 
 Copy the skill to your Claude Code skills directory:
 
 ```bash
-mkdir -p ~/.claude/skills/paasd
-cp .claude/skills/paasd/SKILL.md ~/.claude/skills/paasd/SKILL.md
+mkdir -p ~/.claude/skills/agentic-hosting
+cp .claude/skills/agentic-hosting/SKILL.md ~/.claude/skills/agentic-hosting/SKILL.md
 ```
 
-Claude will automatically load the skill and know how to operate paasd: authentication, deployment flows, database provisioning, error handling, and all API limits.
+Claude will automatically load the skill and know how to operate agentic-hosting: authentication, deployment flows, database provisioning, error handling, and all API limits.
 
 ### Slash Commands
 
@@ -359,17 +359,17 @@ cp -r .claude/commands/ /your/project/.claude/commands/
 
 | Command | Description |
 |---------|-------------|
-| `/paasd-deploy <git-url-or-image> <name> [port]` | Deploy from a git URL (Nixpacks build) or Docker image |
-| `/paasd-status` | Full dashboard — disk, services, databases, circuit breakers |
-| `/paasd-db <service> <postgres\|redis> [name]` | Provision a database and wire it to a service |
-| `/paasd-logs <service> [build-id]` | Stream build logs for a service |
+| `/deploy <git-url-or-image> <name> [port]` | Deploy from a git URL (Nixpacks build) or Docker image |
+| `/status` | Full dashboard — disk, services, databases, circuit breakers |
+| `/db <service> <postgres\|redis> [name]` | Provision a database and wire it to a service |
+| `/logs <service> [build-id]` | Stream build logs for a service |
 
 **Example usage in Claude Code:**
 ```
-/paasd-deploy https://github.com/org/my-app web 3000
-/paasd-status
-/paasd-db web postgres
-/paasd-logs web
+/deploy https://github.com/org/my-app web 3000
+/status
+/db web postgres
+/logs web
 ```
 
 ### Bash Scripts

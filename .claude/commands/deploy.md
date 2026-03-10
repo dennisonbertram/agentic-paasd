@@ -1,12 +1,12 @@
 ---
-description: Deploy a service to paasd from a git URL or Docker image. Usage: /paasd-deploy <git-url-or-image> <service-name> [port]
+description: Deploy a service to agentic-hosting from a git URL or Docker image. Usage: /deploy <git-url-or-image> <service-name> [port]
 argument-hint: <git-url-or-image> <service-name> [port]
 allowed-tools: Bash
 ---
 
-Deploy `$2` to paasd using `$1` on port `${3:-3000}`.
+Deploy `$2` to agentic-hosting using `$1` on port `${3:-3000}`.
 
-You are a paasd operator. Use `$PAASD_URL` and `$PAASD_KEY` from the environment (ask the user if not set).
+You are an agentic-hosting operator. Use `$PAASD_URL` and `$PAASD_KEY` from the environment (ask the user if not set).
 
 Follow this exact flow:
 

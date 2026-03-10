@@ -1,12 +1,12 @@
 ---
-description: Stream build logs for a service. Usage: /paasd-logs <service-name> [build-id]
+description: Stream build logs for a service. Usage: /logs <service-name> [build-id]
 argument-hint: <service-name> [build-id]
 allowed-tools: Bash
 ---
 
-Stream logs for service `$1` on paasd at `$PAASD_URL` using `$PAASD_KEY`.
+Stream logs for service `$1` on agentic-hosting at `$PAASD_URL` using `$PAASD_KEY`.
 
-You are a paasd operator.
+You are an agentic-hosting operator.
 
 Steps:
 1. Find the service by name: `GET /v1/services` — filter by name == `$1`
@@ -18,4 +18,4 @@ Steps:
 
 **Note**: Runtime container logs (stdout/stderr) are not yet available via API (see GitHub issue #11). Only build logs are supported.
 
-If no builds exist for the service, tell the user and suggest starting one with `/paasd-deploy`.
+If no builds exist for the service, tell the user and suggest starting one with `/deploy`.
