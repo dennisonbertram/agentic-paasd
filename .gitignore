@@ -6,3 +6,4 @@ master.key
 *.key
 .env
 vendor/
+repomix.txt
