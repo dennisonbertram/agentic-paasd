@@ -334,6 +334,73 @@ PAASD_BOOTSTRAP_TOKEN=dev-token-32-chars-minimum make run
 ./bin/paasd backup
 ```
 
+## Claude Code Integration
+
+paasd ships with a Claude Code skill, slash commands, and bash scripts for operating the API without writing curl commands manually.
+
+### Install the Skill
+
+Copy the skill to your Claude Code skills directory:
+
+```bash
+mkdir -p ~/.claude/skills/paasd
+cp .claude/skills/paasd/SKILL.md ~/.claude/skills/paasd/SKILL.md
+```
+
+Claude will automatically load the skill and know how to operate paasd: authentication, deployment flows, database provisioning, error handling, and all API limits.
+
+### Slash Commands
+
+Copy the commands to your project:
+
+```bash
+cp -r .claude/commands/ /your/project/.claude/commands/
+```
+
+| Command | Description |
+|---------|-------------|
+| `/paasd-deploy <git-url-or-image> <name> [port]` | Deploy from a git URL (Nixpacks build) or Docker image |
+| `/paasd-status` | Full dashboard — disk, services, databases, circuit breakers |
+| `/paasd-db <service> <postgres\|redis> [name]` | Provision a database and wire it to a service |
+| `/paasd-logs <service> [build-id]` | Stream build logs for a service |
+
+**Example usage in Claude Code:**
+```
+/paasd-deploy https://github.com/org/my-app web 3000
+/paasd-status
+/paasd-db web postgres
+/paasd-logs web
+```
+
+### Bash Scripts
+
+Standalone scripts that work without Claude:
+
+```bash
+# Set credentials
+export PAASD_URL="https://<your-domain>"
+export PAASD_KEY="keyid.secret"
+
+# Register a new tenant (one-time)
+PAASD_BOOTSTRAP_TOKEN=<token> ./scripts/register.sh my-tenant me@example.com
+
+# Deploy from git or Docker image
+./scripts/deploy.sh https://github.com/org/repo my-app 3000
+./scripts/deploy.sh nginx:alpine my-site 80
+
+# Check status of everything
+./scripts/status.sh
+
+# Provision a database and wire it to a service
+./scripts/db-provision.sh my-app postgres
+./scripts/db-provision.sh my-app redis
+
+# Stream build logs
+./scripts/logs.sh my-app
+```
+
+See [`scripts/README.md`](scripts/README.md) for full documentation.
+
 ## Planned Work
 
 See [GitHub Issues](https://github.com/dennisonbertram/agentic-paasd/issues) for planned enhancements including:
