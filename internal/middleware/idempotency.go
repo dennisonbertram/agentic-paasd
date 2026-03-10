@@ -1,6 +1,10 @@
 package middleware
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -8,17 +12,18 @@ import (
 )
 
 const (
-	maxIdempotencyEntries       = 500
-	maxIdempotencyPerTenant     = 50
-	maxIdempotencyKeyLen        = 128
-	maxIdempotencyBodyLen       = 8 * 1024 // 8KB max stored response
-	idempotencyTTL              = 10 * time.Minute
+	maxIdempotencyEntries   = 500
+	maxIdempotencyPerTenant = 50
+	maxIdempotencyKeyLen    = 128
+	maxIdempotencyBodyLen   = 8 * 1024 // 8KB max stored response
+	idempotencyTTL          = 10 * time.Minute
 )
 
 type idempotencyEntry struct {
-	statusCode int
-	body       []byte
-	expiresAt  time.Time
+	statusCode  int
+	body        []byte
+	bodyHash    string // SHA-256 hex of request body for mismatch detection
+	expiresAt   time.Time
 }
 
 type IdempotencyStore struct {
@@ -74,6 +79,23 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	return rr.ResponseWriter.Write(b)
 }
 
+// hashRequestBody reads the request body, computes SHA-256, and replaces
+// r.Body with a new reader so downstream handlers can still read it.
+func hashRequestBody(r *http.Request) (string, error) {
+	if r.Body == nil {
+		return "empty", nil
+	}
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "", err
+	}
+	r.Body.Close()
+	// Replace body so downstream handlers can read it
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	h := sha256.Sum256(bodyBytes)
+	return hex.EncodeToString(h[:]), nil
+}
+
 func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only apply idempotency to POST and PUT
@@ -109,11 +131,24 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 		}
 		fullKey := tenantID + ":" + r.Method + ":" + r.URL.RequestURI() + ":" + key
 
+		// Hash request body for payload mismatch detection.
+		// Body is already capped by maxBodySize middleware (1MB).
+		reqBodyHash, err := hashRequestBody(r)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "failed to read request body")
+			return
+		}
+
 		s.mu.RLock()
 		entry, exists := s.entries[fullKey]
 		s.mu.RUnlock()
 
 		if exists && time.Now().Before(entry.expiresAt) {
+			// Detect payload mismatch: same idempotency key but different body
+			if entry.bodyHash != reqBodyHash {
+				writeJSONError(w, http.StatusConflict, "idempotency key reused with different request body")
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(entry.statusCode)
 			w.Write(entry.body)
@@ -153,6 +188,7 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 				s.entries[fullKey] = &idempotencyEntry{
 					statusCode: rec.statusCode,
 					body:       rec.body,
+					bodyHash:   reqBodyHash,
 					expiresAt:  time.Now().Add(idempotencyTTL),
 				}
 			}

@@ -148,7 +148,7 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		provided := r.Header.Get("X-Bootstrap-Token")
 		// HMAC-compare to prevent length-leak from ConstantTimeCompare
 		if !hmacEqual(provided, s.bootstrapToken, s.masterKey) {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			writeError(w, http.StatusUnauthorized, "missing or invalid bootstrap token")
 			return
 		}
 	}
@@ -209,8 +209,10 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 		tenantID, req.Name, req.Email, now, now,
 	)
 	if err != nil {
-		// Use generic error to prevent email enumeration via duplicate detection
-		writeError(w, http.StatusInternalServerError, "internal error")
+		// Return generic non-500 error to prevent email enumeration while still
+		// signaling to the client that registration failed for a fixable reason.
+		// Operators can check server logs for the actual constraint violation.
+		writeError(w, http.StatusUnprocessableEntity, "registration failed, please check your details and try again")
 		return
 	}
 

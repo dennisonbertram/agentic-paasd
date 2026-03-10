@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -127,5 +128,5 @@ func (s *Server) buildDetailedHealth() DetailedHealthResponse {
 }
 
 func round2(f float64) float64 {
-	return float64(int(f*100)) / 100
+	return math.Round(f*100) / 100
 }

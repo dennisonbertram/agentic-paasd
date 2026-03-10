@@ -91,6 +91,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		limiter := rl.getLimiter(tenantID)
 		if !limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
 			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
@@ -114,6 +115,7 @@ func NewGlobalRateLimiter(rps float64, burst int) *GlobalRateLimiter {
 func (gl *GlobalRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !gl.limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
 			writeJSONError(w, http.StatusTooManyRequests, "global rate limit exceeded")
 			return
 		}

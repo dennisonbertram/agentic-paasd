@@ -47,9 +47,17 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		req.Name = "unnamed"
 	}
 
-	if req.ExpiresIn != nil && *req.ExpiresIn <= 0 {
-		writeError(w, http.StatusBadRequest, "expires_in must be positive")
-		return
+	if req.ExpiresIn != nil {
+		if *req.ExpiresIn <= 0 {
+			writeError(w, http.StatusBadRequest, "expires_in must be positive (seconds)")
+			return
+		}
+		// Cap at 10 years to prevent effectively never-expiring keys
+		const maxExpiresIn = 10 * 365 * 24 * 3600 // ~10 years in seconds
+		if *req.ExpiresIn > maxExpiresIn {
+			writeError(w, http.StatusBadRequest, "expires_in exceeds maximum (10 years)")
+			return
+		}
 	}
 
 	var keyCount int
