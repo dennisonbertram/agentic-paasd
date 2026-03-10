@@ -12,14 +12,14 @@ You are an AI agent operating paasd via its REST API. There is no dashboard — 
 
 Before you start, you need:
 
-1. **API base URL**: `http://65.21.67.254:8080` (from outside the server) or `http://localhost:8080` (if running on the server itself)
+1. **API base URL**: `https://<your-domain>` (production, via Traefik) or `http://localhost:8080` (local dev with `--dev` flag -- no HTTPS enforcement)
 2. **API key**: A bearer token for your tenant. Set it as `API_KEY` in your shell.
 3. **Bootstrap token** (only needed when registering a new tenant): Read it from `/etc/default/paasd` on the server as `PAASD_BOOTSTRAP_TOKEN`.
 
 Set these in your shell before running any commands:
 
 ```bash
-BASE_URL="http://65.21.67.254:8080"
+BASE_URL="https://<your-domain>"
 API_KEY="your-api-key-here"
 ```
 
@@ -132,7 +132,7 @@ You only do this once per tenant. If you already have an API key, skip to the ne
 If you have SSH access to the server, read the token:
 
 ```bash
-ssh root@65.21.67.254 "grep PAASD_BOOTSTRAP_TOKEN /etc/default/paasd | cut -d= -f2"
+ssh root@<your-server-ip> "grep PAASD_BOOTSTRAP_TOKEN /etc/default/paasd | cut -d= -f2"
 ```
 
 Store it:
