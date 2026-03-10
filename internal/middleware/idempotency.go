@@ -159,15 +159,20 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 				writeJSONError(w, http.StatusConflict, "idempotency key reused with different request body")
 				return
 			}
-			if entry.contentType != "" {
-				w.Header().Set("Content-Type", entry.contentType)
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-			}
-			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Idempotency-Replayed", "true")
+			// For responses with body, set content headers
+			if len(entry.body) > 0 {
+				if entry.contentType != "" {
+					w.Header().Set("Content-Type", entry.contentType)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+				}
+				w.Header().Set("X-Content-Type-Options", "nosniff")
+			}
 			w.WriteHeader(entry.statusCode)
-			w.Write(entry.body)
+			if len(entry.body) > 0 {
+				w.Write(entry.body)
+			}
 			return
 		}
 

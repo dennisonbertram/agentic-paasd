@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -97,17 +96,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
-func (s *Server) ListenAndServe(addr string) error {
-	log.Printf("starting server on %s", addr)
-	if !s.devMode {
-		log.Printf("HTTPS enforcement is ON. The server must be behind a TLS-terminating proxy (e.g. Traefik) that connects via loopback (127.0.0.1). X-Forwarded-Proto is only trusted from loopback RemoteAddr. If the proxy connects from a non-loopback address, requests will be rejected.")
-	}
-	return http.ListenAndServe(addr, s)
-}
-
-// jsonContentType is no longer needed as a global middleware because
-// writeJSON and writeError (via httpx) set Content-Type and nosniff
-// on every response. This avoids setting Content-Type on 204 responses.
 
 // writeError delegates to httpx.WriteError for consistent JSON error responses.
 // All handlers in the api package should use this.
@@ -169,18 +157,7 @@ func requireHTTPS(next http.Handler) http.Handler {
 	})
 }
 
-// stripForwardedHeaders removes proxy headers from direct (non-loopback) connections
-// to prevent spoofing when the server is accidentally exposed.
-func stripForwardedHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r.RemoteAddr) {
-			r.Header.Del("X-Forwarded-For")
-			r.Header.Del("X-Forwarded-Proto")
-			r.Header.Del("X-Real-Ip")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
+
 
 // trustedRealIP extracts client IP from X-Real-Ip ONLY when the request comes
 // from a trusted loopback proxy. X-Forwarded-For is NOT used because clients can

@@ -25,10 +25,11 @@ const (
 // authCacheEntry caches a validated key's DB result to reduce SQLite load.
 // The HMAC verification still runs on every request (fast, in-memory).
 type authCacheEntry struct {
-	tenantID string
-	keyHash  string
-	status   string
-	cachedAt time.Time
+	tenantID  string
+	keyHash   string
+	status    string
+	expiresAt *int64 // key expiration time (nil = no expiry)
+	cachedAt  time.Time
 }
 
 type authCache struct {
@@ -178,30 +179,37 @@ func Auth(db *sql.DB, masterKey []byte) func(http.Handler) http.Handler {
 
 			// Check auth cache first to reduce DB load
 			if cached, ok := cache.get(keyID); ok {
+				// Verify expiry locally even on cache hit
+				if cached.expiresAt != nil && time.Now().Unix() > *cached.expiresAt {
+					writeJSONError(w, http.StatusUnauthorized, "invalid api key")
+					return
+				}
 				tenantID = cached.tenantID
 				keyHash = cached.keyHash
 				status = cached.status
 			} else {
 				now := time.Now().Unix()
+				var expiresAt *int64
 				err := db.QueryRowContext(r.Context(),
-					`SELECT ak.tenant_id, ak.key_hash, t.status
+					`SELECT ak.tenant_id, ak.key_hash, t.status, ak.expires_at
 					 FROM api_keys ak
 					 JOIN tenants t ON t.id = ak.tenant_id
 					 WHERE ak.id = ?
 					   AND ak.revoked_at IS NULL
 					   AND (ak.expires_at IS NULL OR ak.expires_at > ?)`,
 					keyID, now,
-				).Scan(&tenantID, &keyHash, &status)
+				).Scan(&tenantID, &keyHash, &status, &expiresAt)
 				if err != nil {
 					writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 					return
 				}
 
 				cache.set(keyID, &authCacheEntry{
-					tenantID: tenantID,
-					keyHash:  keyHash,
-					status:   status,
-					cachedAt: time.Now(),
+					tenantID:  tenantID,
+					keyHash:   keyHash,
+					status:    status,
+					expiresAt: expiresAt,
+					cachedAt:  time.Now(),
 				})
 			}
 

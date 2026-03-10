@@ -107,6 +107,8 @@ func main() {
 	log.Printf("paasd listening on %s", addr)
 	if *devMode {
 		log.Printf("WARNING: running in dev mode — HTTPS enforcement disabled")
+	} else {
+		log.Printf("HTTPS enforcement is ON. The server must be behind a TLS-terminating proxy (e.g. Traefik) that connects via loopback (127.0.0.1). X-Forwarded-Proto is only trusted from loopback RemoteAddr.")
 	}
 
 	<-done
