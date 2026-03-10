@@ -163,6 +163,17 @@ func (b *Builder) untrackUnit(buildID string) {
 	b.procMu.Unlock()
 }
 
+// cleanupUnit stops a systemd scope unit if the context was cancelled.
+// Called in defer to ensure no orphaned processes on timeout.
+func (b *Builder) cleanupUnit(ctx context.Context, unitName string) {
+	if ctx.Err() != nil {
+		cmd := exec.Command("systemctl", "stop", unitName)
+		if err := cmd.Run(); err != nil {
+			log.Printf("builder: failed to stop unit %s on cleanup: %v", unitName, err)
+		}
+	}
+}
+
 // sanitizeURL strips credentials from a URL for logging.
 func sanitizeURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
@@ -283,6 +294,7 @@ func (b *Builder) nixpacksBuild(ctx context.Context, req BuildRequest, buildDir 
 	}
 	b.trackUnit(req.BuildID, unitName)
 	defer b.untrackUnit(req.BuildID)
+	defer b.cleanupUnit(buildCtx, unitName)
 
 	go streamLines(stdout, logCb)
 	go streamLines(stderr, logCb)
@@ -327,6 +339,7 @@ func (b *Builder) pushImage(ctx context.Context, req BuildRequest, logCb func(st
 	}
 	b.trackUnit(req.BuildID, unitName)
 	defer b.untrackUnit(req.BuildID)
+	defer b.cleanupUnit(pushCtx, unitName)
 
 	go streamLines(stdout, logCb)
 	go streamLines(stderr, logCb)

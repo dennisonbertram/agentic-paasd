@@ -58,12 +58,31 @@ type Manager struct {
 
 // NewManager creates a build manager.
 func NewManager(db *sql.DB, b *builder.Builder, deployFn DeployFunc) *Manager {
-	return &Manager{
+	m := &Manager{
 		db:       db,
 		builder:  b,
 		deployFn: deployFn,
 		logSubs:  make(map[string][]chan string),
 		logSizes: make(map[string]int),
+	}
+	// Mark any stale builds from previous process as failed
+	m.reconcileStaleBuilds()
+	return m
+}
+
+// reconcileStaleBuilds marks any builds stuck in pending/running as failed on startup.
+func (m *Manager) reconcileStaleBuilds() {
+	now := time.Now().Unix()
+	result, err := m.db.Exec(
+		`UPDATE builds SET status = 'failed', finished_at = ?, log = log || ? WHERE status IN ('pending', 'running')`,
+		now, "[paasd] Build failed: process restarted\n",
+	)
+	if err != nil {
+		log.Printf("builds: reconcile stale builds error: %v", err)
+		return
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		log.Printf("builds: marked %d stale builds as failed on startup", n)
 	}
 }
 
@@ -168,22 +187,30 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 
 	err := m.builder.Build(ctx, req, logCb)
 
+	// Use a fresh context for final DB writes so timeout doesn't prevent status update
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer finalCancel()
+
 	finishedAt := time.Now().Unix()
 	if err != nil {
 		logCb("[paasd] BUILD FAILED: " + err.Error())
 		log.Printf("build %s failed: %v", buildID, err)
-		m.db.ExecContext(ctx,
+		if _, dbErr := m.db.ExecContext(finalCtx,
 			`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ?`,
 			finishedAt, buildID,
-		)
+		); dbErr != nil {
+			log.Printf("builds: failed to mark build %s as failed: %v", buildID, dbErr)
+		}
 		m.closeLogSubs(buildID)
 		return
 	}
 
-	m.db.ExecContext(ctx,
+	if _, dbErr := m.db.ExecContext(finalCtx,
 		`UPDATE builds SET status = 'succeeded', finished_at = ? WHERE id = ?`,
 		finishedAt, buildID,
-	)
+	); dbErr != nil {
+		log.Printf("builds: failed to mark build %s as succeeded: %v", buildID, dbErr)
+	}
 	m.closeLogSubs(buildID)
 
 	// Deploy the built image

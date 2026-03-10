@@ -126,7 +126,6 @@ func (s *Server) setupRoutes() {
 		r.Post("/v1/services/{serviceID}/start", s.handleServiceStart)
 		r.Post("/v1/services/{serviceID}/stop", s.handleServiceStop)
 		r.Post("/v1/services/{serviceID}/restart", s.handleServiceRestart)
-		r.Get("/v1/services/{serviceID}/logs", s.handleServiceLogs)
 		r.Get("/v1/services/{serviceID}/env", s.handleServiceEnvGet)
 		r.Post("/v1/services/{serviceID}/env", s.handleServiceEnvSet)
 		r.Delete("/v1/services/{serviceID}/env/{key}", s.handleServiceEnvDelete)
@@ -135,8 +134,14 @@ func (s *Server) setupRoutes() {
 		r.Post("/v1/services/{serviceID}/builds", s.handleBuildCreate)
 		r.Get("/v1/services/{serviceID}/builds", s.handleBuildList)
 		r.Get("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildGet)
-		r.Get("/v1/services/{serviceID}/builds/{buildID}/logs", s.handleBuildLogs)
+		// Build log streaming is in a separate group (no 30s timeout)
 		r.Delete("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildCancel)
+	})
+
+	// Streaming endpoints — auth required but no 30s timeout (for ?follow=true)
+	r.Group(func(r chi.Router) {
+		r.Use(s.authMW)
+		r.Get("/v1/services/{serviceID}/builds/{buildID}/logs", s.handleBuildLogs)
 	})
 
 	s.router = r
