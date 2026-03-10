@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/paasd/paasd/internal/docker"
@@ -56,12 +57,25 @@ func (r *Reconciler) safeReconcile(ctx context.Context) {
 	}
 }
 
+// isNotFoundError returns true if the error indicates a container definitively
+// does not exist (Docker 404). Transient errors (daemon down, timeout) return false.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "No such container") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "404")
+}
+
 func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 	// Get all paasd containers from Docker using the tenant label,
 	// which is set on BOTH service and database containers.
 	containerIDs, err := r.docker.ListContainersByLabel(ctx, "paasd.tenant", "")
 	if err != nil {
-		return fmt.Errorf("list paasd containers: %w", err)
+		// Docker daemon may be temporarily unavailable — do NOT mutate DB state.
+		return fmt.Errorf("list paasd containers (skipping reconciliation): %w", err)
 	}
 
 	containerSet := make(map[string]bool, len(containerIDs))
@@ -71,7 +85,7 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 
 	var checked, fixed int
 
-	// 1. Check services marked "running" — if container gone, mark "crashed"
+	// 1. Check services marked "running" — if container gone or exited, mark "crashed"
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, container_id, tenant_id FROM services WHERE status = 'running' AND container_id != ''`)
 	if err != nil {
@@ -92,17 +106,50 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 
 	for _, s := range runningServices {
 		checked++
+
+		shouldMarkCrashed := false
+		crashReason := ""
+
 		if !containerSet[s.containerID] {
-			// Double-check with a direct inspect to avoid transient list misses
+			// Container not in list — double-check with direct inspect
 			_, inspectErr := r.docker.InspectContainer(ctx, s.containerID)
-			if inspectErr == nil {
-				// Container actually exists, skip
+			if inspectErr != nil {
+				if isNotFoundError(inspectErr) {
+					// Definitively gone
+					shouldMarkCrashed = true
+					crashReason = "container not found by reconciler"
+				} else {
+					// Transient Docker error — do NOT mark as crashed
+					log.Printf("reconciler: transient Docker error for service %s (container %s), skipping: %v",
+						s.id, s.containerID[:12], inspectErr)
+					continue
+				}
+			}
+			// If inspect succeeded but container wasn't in list, it exists — check its status below
+			if !shouldMarkCrashed {
+				info, _ := r.docker.InspectContainer(ctx, s.containerID)
+				if info != nil && (info.Status == "exited" || info.Status == "dead") {
+					shouldMarkCrashed = true
+					crashReason = fmt.Sprintf("container %s (exit code %d)", info.Status, info.ExitCode)
+				}
+			}
+		} else {
+			// Container exists in list — check if it's actually running or exited/dead
+			info, inspectErr := r.docker.InspectContainer(ctx, s.containerID)
+			if inspectErr != nil {
+				// Can't inspect but container is in list — skip, don't mark crashed
 				continue
 			}
+			if info.Status == "exited" || info.Status == "dead" {
+				shouldMarkCrashed = true
+				crashReason = fmt.Sprintf("container %s (exit code %d)", info.Status, info.ExitCode)
+			}
+		}
 
+		if shouldMarkCrashed {
 			now := time.Now().Unix()
-			// Atomic circuit breaker: reset crash_count if last crash is outside
-			// the 10min window, otherwise increment. Open circuit at 5 crashes.
+			// Atomic circuit breaker with proper sliding window:
+			// Track window start. Reset if window expired, otherwise increment.
 			_, err := r.db.ExecContext(ctx, `
 				UPDATE services SET
 					status = 'crashed',
@@ -115,20 +162,19 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 						ELSE circuit_open
 					END,
 					last_crashed_at = ?,
-					last_error = 'container not found by reconciler',
+					last_error = ?,
 					updated_at = ?
-				WHERE id = ?`,
-				now, now, now, now, s.id)
+				WHERE id = ? AND tenant_id = ?`,
+				now, now, now, crashReason, now, s.id, s.tenantID)
 			if err != nil {
 				log.Printf("reconciler: failed to mark service %s as crashed: %v", s.id, err)
 			} else {
-				// Check if circuit was opened
 				var circuitOpen int
 				r.db.QueryRowContext(ctx, `SELECT circuit_open FROM services WHERE id = ?`, s.id).Scan(&circuitOpen)
 				if circuitOpen == 1 {
 					log.Printf("reconciler: service %s circuit breaker OPEN", s.id)
 				}
-				log.Printf("reconciler: service %s marked crashed (container %s not found)", s.id, s.containerID[:12])
+				log.Printf("reconciler: service %s marked crashed (%s)", s.id, crashReason)
 				fixed++
 			}
 		}
@@ -168,19 +214,20 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 		for _, d := range readyDBs {
 			checked++
 			if !containerSet[d.containerID] {
-				// Double-check with inspect
+				// Only mark unavailable on definitive not-found
 				_, inspectErr := r.docker.InspectContainer(ctx, d.containerID)
-				if inspectErr == nil {
-					continue
-				}
-				_, err := r.db.ExecContext(ctx,
-					`UPDATE databases SET status = 'unavailable', updated_at = ? WHERE id = ?`,
-					time.Now().Unix(), d.id)
-				if err != nil {
-					log.Printf("reconciler: failed to mark database %s as unavailable: %v", d.id, err)
-				} else {
-					log.Printf("reconciler: database %s marked unavailable (container not found)", d.id)
-					fixed++
+				if inspectErr != nil && isNotFoundError(inspectErr) {
+					_, err := r.db.ExecContext(ctx,
+						`UPDATE databases SET status = 'unavailable', updated_at = ? WHERE id = ?`,
+						time.Now().Unix(), d.id)
+					if err != nil {
+						log.Printf("reconciler: failed to mark database %s as unavailable: %v", d.id, err)
+					} else {
+						log.Printf("reconciler: database %s marked unavailable (container not found)", d.id)
+						fixed++
+					}
+				} else if inspectErr != nil {
+					log.Printf("reconciler: transient Docker error for database %s, skipping: %v", d.id, inspectErr)
 				}
 			}
 		}

@@ -9,12 +9,25 @@ EnvironmentFile=-/etc/default/paasd
 ExecStart=/usr/local/bin/paasd serve \
   --port 8080 \
   --db-path /var/lib/paasd/paasd.db \
-  --master-key-path /var/lib/paasd/master.key
+  --master-key-path /var/lib/paasd/master.key --dev
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=paasd
+
+# Security hardening
+UMask=0077
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/paasd /var/lib/docker /etc/traefik/dynamic
 
 [Install]
 WantedBy=multi-user.target

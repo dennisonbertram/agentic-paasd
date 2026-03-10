@@ -699,9 +699,17 @@ func (m *Manager) ResetCircuitBreaker(ctx context.Context, tenantID, serviceID s
 		return err
 	}
 
-	// If container is still running, stop it before resetting
+	// If container exists, stop it before resetting.
+	// Verify the stop actually worked to avoid DB/Docker split-brain.
 	if svc.ContainerID != "" {
-		_ = m.docker.StopContainer(ctx, svc.ContainerID)
+		if stopErr := m.docker.StopContainer(ctx, svc.ContainerID); stopErr != nil {
+			// Check if container is genuinely gone (not found) vs stop failed
+			info, inspectErr := m.docker.InspectContainer(ctx, svc.ContainerID)
+			if inspectErr == nil && info.Status == "running" {
+				return fmt.Errorf("failed to stop container before reset: %w", stopErr)
+			}
+			// Container is gone or not running — safe to proceed
+		}
 	}
 
 	_, err = m.db.ExecContext(ctx,
