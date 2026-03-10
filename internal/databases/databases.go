@@ -73,7 +73,7 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 	// Check quota
 	var count int
 	if err := m.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM databases WHERE tenant_id = ?`, tenantID,
+		`SELECT COUNT(*) FROM databases WHERE tenant_id = ? AND status != 'failed'`, tenantID,
 	).Scan(&count); err != nil {
 		return nil, fmt.Errorf("check quota: %w", err)
 	}
@@ -166,11 +166,25 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 		return nil, fmt.Errorf("run container: %w", err)
 	}
 
-	// Update container ID
-	m.db.ExecContext(ctx,
+	// Update container ID — check rows affected to detect concurrent Delete
+	result, updateErr := m.db.ExecContext(ctx,
 		`UPDATE databases SET container_id = ?, updated_at = ? WHERE id = ?`,
 		containerID, time.Now().Unix(), id,
 	)
+	if updateErr != nil || result == nil {
+		log.Printf("databases: failed to update container_id for %s, cleaning up", id)
+		_ = m.docker.StopContainer(ctx, containerID)
+		_ = m.docker.RemoveContainer(ctx, containerID)
+		_ = m.docker.RemoveVolume(ctx, volumeName)
+		return nil, fmt.Errorf("database record deleted during provisioning")
+	}
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected == 0 {
+		log.Printf("databases: record %s was deleted during provisioning, cleaning up", id)
+		_ = m.docker.StopContainer(ctx, containerID)
+		_ = m.docker.RemoveContainer(ctx, containerID)
+		_ = m.docker.RemoveVolume(ctx, volumeName)
+		return nil, fmt.Errorf("database record deleted during provisioning")
+	}
 
 	// Wait for health check
 	healthy := false
@@ -182,14 +196,26 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 	}
 
 	if !healthy {
-		m.updateStatus(ctx, id, "failed")
-		_ = m.docker.StopContainer(ctx, containerID)
-		_ = m.docker.RemoveContainer(ctx, containerID)
-		_ = m.docker.RemoveVolume(ctx, volumeName)
+		if m.updateStatus(ctx, id, "failed") {
+			_ = m.docker.StopContainer(ctx, containerID)
+			_ = m.docker.RemoveContainer(ctx, containerID)
+			_ = m.docker.RemoveVolume(ctx, volumeName)
+		} else {
+			// Row was deleted concurrently — still clean up Docker resources
+			_ = m.docker.StopContainer(ctx, containerID)
+			_ = m.docker.RemoveContainer(ctx, containerID)
+			_ = m.docker.RemoveVolume(ctx, volumeName)
+		}
 		return nil, fmt.Errorf("database health check failed after 30s")
 	}
 
-	m.updateStatus(ctx, id, "ready")
+	if !m.updateStatus(ctx, id, "ready") {
+		// Row was deleted during provisioning — clean up
+		_ = m.docker.StopContainer(ctx, containerID)
+		_ = m.docker.RemoveContainer(ctx, containerID)
+		_ = m.docker.RemoveVolume(ctx, volumeName)
+		return nil, fmt.Errorf("database record deleted during provisioning")
+	}
 
 	return &Database{
 		ID:               id,
@@ -305,14 +331,25 @@ func (m *Manager) Delete(ctx context.Context, tenantID, dbID string) error {
 	return nil
 }
 
-func (m *Manager) updateStatus(ctx context.Context, id, status string) {
-	_, err := m.db.ExecContext(ctx,
+func (m *Manager) updateStatus(ctx context.Context, id, status string) bool {
+	// Use a fresh context to ensure status updates succeed even if the
+	// request context is cancelled or timed out.
+	freshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := m.db.ExecContext(freshCtx,
 		`UPDATE databases SET status = ?, updated_at = ? WHERE id = ?`,
 		status, time.Now().Unix(), id,
 	)
 	if err != nil {
 		log.Printf("databases: failed to update status for %s: %v", id, err)
+		return false
 	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("databases: record %s was deleted, status update skipped", id)
+		return false
+	}
+	return true
 }
 
 func (m *Manager) findFreePort(dbType string) (int, error) {
