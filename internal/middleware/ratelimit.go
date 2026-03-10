@@ -83,7 +83,9 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenantID := GetTenantID(r.Context())
 		if tenantID == "" {
-			next.ServeHTTP(w, r)
+			// Fail closed: reject if tenant ID is missing (should never happen
+			// in authenticated routes, but prevents bypass if context is lost)
+			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 			return
 		}
 
