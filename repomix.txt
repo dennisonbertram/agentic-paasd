@@ -980,6 +980,152 @@ func (s *Store) Close() error {
 }
 </file>
 
+<file path="internal/middleware/ratelimit.go">
+package middleware
+
+import (
+	"fmt"
+	"math"
+	"net/http"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
+)
+
+const maxRateLimitEntries = 10000
+
+type rateLimitEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+type RateLimiter struct {
+	mu      sync.Mutex
+	entries map[string]*rateLimitEntry
+	rate    rate.Limit
+	burst   int
+}
+
+func NewRateLimiter(rps float64, burst int) *RateLimiter {
+	rl := &RateLimiter{
+		entries: make(map[string]*rateLimitEntry),
+		rate:    rate.Limit(rps),
+		burst:   burst,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *RateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-1 * time.Hour)
+		for k, v := range rl.entries {
+			if v.lastSeen.Before(cutoff) {
+				delete(rl.entries, k)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	entry, exists := rl.entries[key]
+	if exists {
+		entry.lastSeen = time.Now()
+		return entry.limiter
+	}
+
+	// Evict oldest if at capacity
+	if len(rl.entries) >= maxRateLimitEntries {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range rl.entries {
+			if oldestKey == "" || v.lastSeen.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.lastSeen
+			}
+		}
+		if oldestKey != "" {
+			delete(rl.entries, oldestKey)
+		}
+	}
+
+	limiter := rate.NewLimiter(rl.rate, rl.burst)
+	rl.entries[key] = &rateLimitEntry{
+		limiter:  limiter,
+		lastSeen: time.Now(),
+	}
+	return limiter
+}
+
+func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantID := GetTenantID(r.Context())
+		if tenantID == "" {
+			// Fail closed: reject if tenant ID is missing (should never happen
+			// in authenticated routes, but prevents bypass if context is lost)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		limiter := rl.getLimiter(tenantID)
+		if !limiter.Allow() {
+			w.Header().Set("Retry-After", retryAfterFromLimiter(limiter))
+			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// GlobalRateLimiter enforces a single rate limit across all tenants to prevent
+// multi-tenant aggregate abuse (e.g., attacker creating many tenants to multiply throughput).
+type GlobalRateLimiter struct {
+	limiter *rate.Limiter
+}
+
+func NewGlobalRateLimiter(rps float64, burst int) *GlobalRateLimiter {
+	return &GlobalRateLimiter{
+		limiter: rate.NewLimiter(rate.Limit(rps), burst),
+	}
+}
+
+func (gl *GlobalRateLimiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !gl.limiter.Allow() {
+			w.Header().Set("Retry-After", retryAfterFromLimiter(gl.limiter))
+			writeJSONError(w, http.StatusTooManyRequests, "global rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// retryAfterFromLimiter computes a Retry-After value (in seconds) based on
+// the token bucket's refill rate. Uses Reserve/Cancel to peek at the delay
+// without consuming a token.
+func retryAfterFromLimiter(l *rate.Limiter) string {
+	r := l.Reserve()
+	delay := r.Delay()
+	r.Cancel()
+	secs := int(math.Ceil(delay.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	if secs > 60 {
+		secs = 60 // cap at 60s to avoid unreasonable backoff
+	}
+	return fmt.Sprintf("%d", secs)
+}
+</file>
+
 <file path="internal/docker/client.go">
 // Package docker wraps the Docker Engine API for paasd container lifecycle.
 package docker
@@ -1174,7 +1320,7 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 	} else if traefikID != "" {
 		if connErr := c.cli.NetworkConnect(ctx, tenantNet, traefikID, nil); connErr != nil {
 			// "already connected" is expected and safe to ignore
-			if !strings.Contains(connErr.Error(), "already exists") {
+			if !strings.Contains(connErr.Error(), "already") {
 				log.Printf("WARNING: failed to connect Traefik to network %s: %v", tenantNet, connErr)
 			}
 		}
@@ -1301,152 +1447,6 @@ func (c *Client) VerifyGVisorRuntime(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("gVisor runtime (runsc) not found in Docker daemon")
-}
-</file>
-
-<file path="internal/middleware/ratelimit.go">
-package middleware
-
-import (
-	"fmt"
-	"math"
-	"net/http"
-	"sync"
-	"time"
-
-	"golang.org/x/time/rate"
-)
-
-const maxRateLimitEntries = 10000
-
-type rateLimitEntry struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
-}
-
-type RateLimiter struct {
-	mu      sync.Mutex
-	entries map[string]*rateLimitEntry
-	rate    rate.Limit
-	burst   int
-}
-
-func NewRateLimiter(rps float64, burst int) *RateLimiter {
-	rl := &RateLimiter{
-		entries: make(map[string]*rateLimitEntry),
-		rate:    rate.Limit(rps),
-		burst:   burst,
-	}
-	go rl.cleanup()
-	return rl
-}
-
-func (rl *RateLimiter) cleanup() {
-	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-1 * time.Hour)
-		for k, v := range rl.entries {
-			if v.lastSeen.Before(cutoff) {
-				delete(rl.entries, k)
-			}
-		}
-		rl.mu.Unlock()
-	}
-}
-
-func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	entry, exists := rl.entries[key]
-	if exists {
-		entry.lastSeen = time.Now()
-		return entry.limiter
-	}
-
-	// Evict oldest if at capacity
-	if len(rl.entries) >= maxRateLimitEntries {
-		var oldestKey string
-		var oldestTime time.Time
-		for k, v := range rl.entries {
-			if oldestKey == "" || v.lastSeen.Before(oldestTime) {
-				oldestKey = k
-				oldestTime = v.lastSeen
-			}
-		}
-		if oldestKey != "" {
-			delete(rl.entries, oldestKey)
-		}
-	}
-
-	limiter := rate.NewLimiter(rl.rate, rl.burst)
-	rl.entries[key] = &rateLimitEntry{
-		limiter:  limiter,
-		lastSeen: time.Now(),
-	}
-	return limiter
-}
-
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenantID := GetTenantID(r.Context())
-		if tenantID == "" {
-			// Fail closed: reject if tenant ID is missing (should never happen
-			// in authenticated routes, but prevents bypass if context is lost)
-			writeJSONError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-
-		limiter := rl.getLimiter(tenantID)
-		if !limiter.Allow() {
-			w.Header().Set("Retry-After", retryAfterFromLimiter(limiter))
-			writeJSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// GlobalRateLimiter enforces a single rate limit across all tenants to prevent
-// multi-tenant aggregate abuse (e.g., attacker creating many tenants to multiply throughput).
-type GlobalRateLimiter struct {
-	limiter *rate.Limiter
-}
-
-func NewGlobalRateLimiter(rps float64, burst int) *GlobalRateLimiter {
-	return &GlobalRateLimiter{
-		limiter: rate.NewLimiter(rate.Limit(rps), burst),
-	}
-}
-
-func (gl *GlobalRateLimiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !gl.limiter.Allow() {
-			w.Header().Set("Retry-After", retryAfterFromLimiter(gl.limiter))
-			writeJSONError(w, http.StatusTooManyRequests, "global rate limit exceeded")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// retryAfterFromLimiter computes a Retry-After value (in seconds) based on
-// the token bucket's refill rate. Uses Reserve/Cancel to peek at the delay
-// without consuming a token.
-func retryAfterFromLimiter(l *rate.Limiter) string {
-	r := l.Reserve()
-	delay := r.Delay()
-	r.Cancel()
-	secs := int(math.Ceil(delay.Seconds()))
-	if secs < 1 {
-		secs = 1
-	}
-	if secs > 60 {
-		secs = 60 // cap at 60s to avoid unreasonable backoff
-	}
-	return fmt.Sprintf("%d", secs)
 }
 </file>
 
@@ -1845,7 +1845,7 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 // Uses a bounded semaphore with a bounded queue for backpressure.
 func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error {
 	if m.docker == nil {
-		m.updateStatusWithError(ctx, serviceID, "failed", "Docker client not configured")
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", "Docker client not configured")
 		return fmt.Errorf("docker client not configured")
 	}
 	if err := m.checkTenantActive(ctx, tenantID); err != nil {
@@ -1857,7 +1857,7 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 	case m.deployQueue <- struct{}{}:
 		defer func() { <-m.deployQueue }()
 	default:
-		m.updateStatusWithError(ctx, serviceID, "failed", "deploy queue full; try again later")
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", "deploy queue full; try again later")
 		return fmt.Errorf("deploy queue full; try again later")
 	}
 
@@ -1874,17 +1874,17 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 		return err
 	}
 
-	m.updateStatus(ctx, serviceID, "deploying")
+	m.updateStatusScoped(ctx, tenantID, serviceID, "deploying")
 
 	// Ensure per-tenant network exists for isolation
 	_, err = m.docker.EnsureNetwork(ctx, docker.TenantNetworkName(tenantID))
 	if err != nil {
-		m.updateStatusWithError(ctx, serviceID, "failed", fmt.Sprintf("network setup failed: %v", err))
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", fmt.Sprintf("network setup failed: %v", err))
 		return fmt.Errorf("ensure tenant network: %w", err)
 	}
 
 	if err := m.docker.PullImage(ctx, svc.Image); err != nil {
-		m.updateStatusWithError(ctx, serviceID, "failed", fmt.Sprintf("image pull failed: %v", err))
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", fmt.Sprintf("image pull failed: %v", err))
 		return fmt.Errorf("pull image: %w", err)
 	}
 
@@ -1896,7 +1896,7 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 
 	envVars, err := m.getEnvVars(ctx, serviceID)
 	if err != nil {
-		m.updateStatusWithError(ctx, serviceID, "failed", fmt.Sprintf("env vars load failed: %v", err))
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", fmt.Sprintf("env vars load failed: %v", err))
 		return fmt.Errorf("load env vars: %w", err)
 	}
 
@@ -1915,7 +1915,7 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 
 	containerID, err := m.docker.RunContainer(ctx, tenantID, serviceID, svc.Image, port, envVars, nil, limits)
 	if err != nil {
-		m.updateStatusWithError(ctx, serviceID, "failed", fmt.Sprintf("container start failed: %v", err))
+		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", fmt.Sprintf("container start failed: %v", err))
 		return fmt.Errorf("run container: %w", err)
 	}
 
@@ -2227,10 +2227,30 @@ func (m *Manager) updateStatus(ctx context.Context, serviceID, status string) {
 	}
 }
 
+func (m *Manager) updateStatusScoped(ctx context.Context, tenantID, serviceID, status string) {
+	_, err := m.db.ExecContext(ctx,
+		`UPDATE services SET status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+		status, time.Now().Unix(), serviceID, tenantID,
+	)
+	if err != nil {
+		log.Printf("ERROR: failed to update status for service %s to %s: %v", serviceID, status, err)
+	}
+}
+
 func (m *Manager) updateStatusWithError(ctx context.Context, serviceID, status, lastError string) {
 	_, err := m.db.ExecContext(ctx,
 		`UPDATE services SET status = ?, last_error = ?, updated_at = ? WHERE id = ?`,
 		status, lastError, time.Now().Unix(), serviceID,
+	)
+	if err != nil {
+		log.Printf("ERROR: failed to update status/error for service %s to %s: %v", serviceID, status, err)
+	}
+}
+
+func (m *Manager) updateStatusWithErrorScoped(ctx context.Context, tenantID, serviceID, status, lastError string) {
+	_, err := m.db.ExecContext(ctx,
+		`UPDATE services SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+		status, lastError, time.Now().Unix(), serviceID, tenantID,
 	)
 	if err != nil {
 		log.Printf("ERROR: failed to update status/error for service %s to %s: %v", serviceID, status, err)

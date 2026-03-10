@@ -306,8 +306,9 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 		port = 8000
 	}
 	if p, ok := envVars["PORT"]; ok {
-		if _, err := fmt.Sscanf(p, "%d", &port); err != nil {
-			port = 8000
+		var parsed int
+		if _, err := fmt.Sscanf(p, "%d", &parsed); err == nil && parsed >= 1 && parsed <= 65535 {
+			port = parsed
 		}
 	}
 
@@ -659,13 +660,19 @@ func (m *Manager) updateStatusWithErrorScoped(ctx context.Context, tenantID, ser
 }
 
 func (m *Manager) setEnvVars(ctx context.Context, serviceID string, vars map[string]string) error {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	now := time.Now().Unix()
 	for k, v := range vars {
 		encrypted, err := crypto.Encrypt([]byte(v), m.masterKey)
 		if err != nil {
 			return fmt.Errorf("encrypt env var %s: %w", k, err)
 		}
-		_, err = m.db.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`INSERT INTO service_env (service_id, key, value_encrypted, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(service_id, key) DO UPDATE SET value_encrypted = excluded.value_encrypted, updated_at = excluded.updated_at`,
@@ -675,7 +682,7 @@ func (m *Manager) setEnvVars(ctx context.Context, serviceID string, vars map[str
 			return fmt.Errorf("upsert env var %s: %w", k, err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (m *Manager) getEnvVars(ctx context.Context, serviceID string) (map[string]string, error) {
