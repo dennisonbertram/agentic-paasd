@@ -17,6 +17,7 @@ import (
 
 func main() {
 	port := flag.String("port", "8080", "HTTP port")
+	listenAddr := flag.String("listen-addr", "", "Listen address (default: 127.0.0.1 in prod, 127.0.0.1 in dev; use 0.0.0.0 to bind all interfaces)")
 	dbPath := flag.String("db-path", "/var/lib/paasd/paasd.db", "Path to state SQLite database")
 	masterKeyPath := flag.String("master-key-path", "/var/lib/paasd/master.key", "Path to master encryption key")
 	devMode := flag.Bool("dev", false, "Development mode (relaxes security requirements)")
@@ -56,15 +57,15 @@ func main() {
 		BootstrapToken: bootstrapToken,
 	})
 
-	// Bind to 127.0.0.1 in production (only Traefik can reach it).
-	// In dev mode, bind to all interfaces for direct testing.
-	listenAddr := "127.0.0.1:" + *port
-	if *devMode {
-		listenAddr = ":" + *port
+	// Default to 127.0.0.1 in ALL modes (loopback only).
+	// Must explicitly pass --listen-addr=0.0.0.0 to bind all interfaces.
+	addr := "127.0.0.1:" + *port
+	if *listenAddr != "" {
+		addr = *listenAddr + ":" + *port
 	}
 
 	httpServer := &http.Server{
-		Addr:              listenAddr,
+		Addr:              addr,
 		Handler:           srv,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -82,9 +83,9 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
-	log.Printf("paasd listening on %s", listenAddr)
+	log.Printf("paasd listening on %s", addr)
 	if *devMode {
-		log.Printf("WARNING: running in dev mode — HTTPS enforcement disabled, binding to all interfaces")
+		log.Printf("WARNING: running in dev mode — HTTPS enforcement disabled")
 	}
 
 	<-done

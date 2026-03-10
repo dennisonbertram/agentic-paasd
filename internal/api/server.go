@@ -46,9 +46,12 @@ func (s *Server) setupRoutes() {
 	r.Use(chimw.Timeout(30 * time.Second))
 	r.Use(jsonContentType)
 	r.Use(maxBodySize(1 << 20))
+	// Global concurrency limiter: cap in-flight requests to prevent goroutine exhaustion
+	r.Use(chimw.Throttle(200))
 
 	// Enforce HTTPS via X-Forwarded-Proto (Traefik sets this).
-	// Server binds to 127.0.0.1 only, so direct access is impossible.
+	// Server binds to 127.0.0.1 by default, so direct access from
+	// external networks is impossible without explicit --listen-addr override.
 	if !s.devMode {
 		r.Use(requireHTTPS)
 	}
@@ -109,8 +112,8 @@ func maxBodySize(maxBytes int64) func(http.Handler) http.Handler {
 }
 
 // requireHTTPS rejects requests not arriving via TLS-terminating proxy.
-// Combined with binding to 127.0.0.1, this ensures the service is only
-// accessible through Traefik which sets X-Forwarded-Proto.
+// Combined with binding to 127.0.0.1 by default, this ensures the service
+// is only accessible through Traefik which sets X-Forwarded-Proto.
 func requireHTTPS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proto := r.Header.Get("X-Forwarded-Proto")

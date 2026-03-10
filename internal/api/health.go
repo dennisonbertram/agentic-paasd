@@ -41,47 +41,37 @@ type DiskInfo struct {
 }
 
 var (
-	healthCache     *DetailedHealthResponse
-	healthCacheMu   sync.RWMutex
-	healthCacheTime time.Time
-	healthCacheTTL  = 30 * time.Second
+	detailedHealthCache     *DetailedHealthResponse
+	detailedHealthCacheMu   sync.RWMutex
+	detailedHealthCacheTime time.Time
+	detailedHealthCacheTTL  = 30 * time.Second
 )
 
-// handleHealth returns minimal status for public requests.
-// Detailed info (docker, gvisor, disk) requires authentication.
+// handleHealth returns minimal constant-time status for public (unauthenticated) requests.
+// No DB calls — avoids DoS via unauthenticated health check flooding.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	status := "ok"
-	if err := s.store.StateDB.Ping(); err != nil {
-		status = "degraded"
-	}
-	json.NewEncoder(w).Encode(HealthResponse{Status: status})
+	json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 }
 
 // handleHealthDetailed returns full system info (authenticated only).
 func (s *Server) handleHealthDetailed(w http.ResponseWriter, r *http.Request) {
 	_ = middleware.GetTenantID(r.Context()) // auth enforced by middleware
 
-	healthCacheMu.RLock()
-	if healthCache != nil && time.Since(healthCacheTime) < healthCacheTTL {
-		resp := *healthCache
-		healthCacheMu.RUnlock()
-		// Refresh DB status (not cached)
-		if err := s.store.StateDB.Ping(); err != nil {
-			resp.Status = "degraded"
-		} else {
-			resp.Status = "ok"
-		}
+	detailedHealthCacheMu.RLock()
+	if detailedHealthCache != nil && time.Since(detailedHealthCacheTime) < detailedHealthCacheTTL {
+		resp := *detailedHealthCache
+		detailedHealthCacheMu.RUnlock()
 		json.NewEncoder(w).Encode(resp)
 		return
 	}
-	healthCacheMu.RUnlock()
+	detailedHealthCacheMu.RUnlock()
 
 	resp := s.buildDetailedHealth()
 
-	healthCacheMu.Lock()
-	healthCache = &resp
-	healthCacheTime = time.Now()
-	healthCacheMu.Unlock()
+	detailedHealthCacheMu.Lock()
+	detailedHealthCache = &resp
+	detailedHealthCacheTime = time.Now()
+	detailedHealthCacheMu.Unlock()
 
 	json.NewEncoder(w).Encode(resp)
 }
