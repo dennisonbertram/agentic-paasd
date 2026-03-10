@@ -20,7 +20,7 @@ func Check(path string, warnPct, blockPct float64) error {
 
 // CheckAll verifies disk space at multiple paths, returning the first error.
 // This should be used when operations affect multiple filesystems (e.g., both
-// the paasd data dir and Docker's storage root).
+// the ah data dir and Docker's storage root).
 func CheckAll(paths []string, warnPct, blockPct float64) error {
 	for _, path := range paths {
 		// Skip paths that don't exist (e.g., Docker might use a different root)

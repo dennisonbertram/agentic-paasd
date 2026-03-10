@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: PAASD_BOOTSTRAP_TOKEN=<token> ./register.sh <name> <email>
-# Registers a new tenant and saves credentials to ~/.paasd
+# Usage: AH_BOOTSTRAP_TOKEN=<token> ./register.sh <name> <email>
+# Registers a new tenant and saves credentials to ~/.ah
 
 NAME="${1:?Usage: register.sh <name> <email>}"
 EMAIL="${2:?Usage: register.sh <name> <email>}"
-URL="${PAASD_URL:?Set PAASD_URL}"
-TOKEN="${PAASD_BOOTSTRAP_TOKEN:?Set PAASD_BOOTSTRAP_TOKEN}"
+URL="${AH_URL:?Set AH_URL}"
+TOKEN="${AH_BOOTSTRAP_TOKEN:?Set AH_BOOTSTRAP_TOKEN}"
 
 echo "Registering tenant '$NAME'..."
 
@@ -31,5 +31,5 @@ echo "  Tenant ID : $TENANT_ID"
 echo "  API Key   : $API_KEY"
 echo ""
 echo "Add to your shell profile:"
-echo "  export PAASD_URL=\"$URL\""
-echo "  export PAASD_KEY=\"$API_KEY\""
+echo "  export AH_URL=\"$URL\""
+echo "  export AH_KEY=\"$API_KEY\""

@@ -79,7 +79,7 @@ func (g *GC) safeCollect(ctx context.Context) {
 func (g *GC) collectOnce(ctx context.Context) error {
 	var removed int
 
-	// 1. Orphaned containers: paasd-labeled containers not in DB
+	// 1. Orphaned containers: ah-labeled containers not in DB
 	orphanedContainers, err := g.findOrphanedContainers(ctx)
 	if err != nil {
 		log.Printf("gc: orphaned container check failed: %v", err)
@@ -95,7 +95,7 @@ func (g *GC) collectOnce(ctx context.Context) error {
 		}
 	}
 
-	// 2. Orphaned volumes: paasd-db-* volumes not in DB
+	// 2. Orphaned volumes: ah-db-* volumes not in DB
 	orphanedVolumes, err := g.findOrphanedVolumes(ctx)
 	if err != nil {
 		log.Printf("gc: orphaned volume check failed: %v", err)
@@ -111,7 +111,7 @@ func (g *GC) collectOnce(ctx context.Context) error {
 	}
 
 	// 3. Old build work dirs (older than 1 hour)
-	buildDirsCleaned := g.cleanOldBuildDirs("/var/lib/paasd/builds", 1*time.Hour)
+	buildDirsCleaned := g.cleanOldBuildDirs("/var/lib/ah/builds", 1*time.Hour)
 	removed += buildDirsCleaned
 
 	// 4. Dangling images — prune images not referenced by any container
@@ -131,13 +131,13 @@ func (g *GC) collectOnce(ctx context.Context) error {
 }
 
 func (g *GC) findOrphanedContainers(ctx context.Context) ([]string, error) {
-	// Get all paasd service containers
-	svcContainers, err := g.docker.ListContainersByLabel(ctx, "paasd.service", "")
+	// Get all ah service containers
+	svcContainers, err := g.docker.ListContainersByLabel(ctx, "ah.service", "")
 	if err != nil {
 		return nil, err
 	}
-	// Get all paasd database containers
-	dbContainers, err := g.docker.ListContainersByLabel(ctx, "paasd.type", "database")
+	// Get all ah database containers
+	dbContainers, err := g.docker.ListContainersByLabel(ctx, "ah.type", "database")
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (g *GC) findOrphanedContainers(ctx context.Context) ([]string, error) {
 }
 
 func (g *GC) findOrphanedVolumes(ctx context.Context) ([]string, error) {
-	volumes, err := g.docker.ListVolumes(ctx, "paasd-db-")
+	volumes, err := g.docker.ListVolumes(ctx, "ah-db-")
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (g *GC) findOrphanedVolumes(ctx context.Context) ([]string, error) {
 	var orphaned []string
 	for _, name := range volumes {
 		// Strict prefix match — Docker name filter can be substring-based
-		if !strings.HasPrefix(name, "paasd-db-") {
+		if !strings.HasPrefix(name, "ah-db-") {
 			continue
 		}
 

@@ -5,7 +5,7 @@ A self-hosted PaaS for bare metal servers, designed to be operated by AI agents 
 - **Repo**: github.com/dennisonbertram/agentic-hosting
 - **Stack**: Go binary + Docker + gVisor + Traefik + Nixpacks + SQLite
 - **Language**: Go 1.25 (requires CGO for SQLite)
-- **Binary**: `paasd`
+- **Binary**: `ah`
 - **Default port**: 8080 (loopback only, behind Traefik)
 
 ## Design Principles
@@ -24,18 +24,18 @@ A self-hosted PaaS for bare metal servers, designed to be operated by AI agents 
                        │
         ┌──────────────┼──────────────┐
         │              │              │
-   paasd API      Service A      Service B
+   ah API         Service A      Service B
    (127.0.0.1:8080)  (gVisor)       (gVisor)
         │
    SQLite DBs
-   /var/lib/paasd/
+   /var/lib/ah/
 ```
 
-- **paasd** — control plane (single Go binary, systemd service)
+- **ah** — control plane (single Go binary, systemd service)
 - **Traefik** — reverse proxy, discovers services via Docker labels, handles TLS
 - **gVisor (runsc)** — container runtime, syscall interception for tenant isolation
 - **Nixpacks** — zero-config source-to-image builds
-- **SQLite** — two databases: `paasd.db` (state) and `paasd-metering.db` (metering), WAL mode
+- **SQLite** — two databases: `ah.db` (state) and `ah-metering.db` (metering), WAL mode
 
 ## Server Requirements
 
@@ -44,8 +44,8 @@ A self-hosted PaaS for bare metal servers, designed to be operated by AI agents 
 - Go 1.21+ with CGO enabled
 - Nixpacks installed
 - Traefik running as Docker container
-- `PAASD_BOOTSTRAP_TOKEN` environment variable (min 32 chars)
-- `/var/lib/paasd/master.key` — hex-encoded 32-byte key
+- `AH_BOOTSTRAP_TOKEN` environment variable (min 32 chars)
+- `/var/lib/ah/master.key` — hex-encoded 32-byte key
 
 ## Installation
 
@@ -98,18 +98,18 @@ docker run -d --name paas-traefik --restart unless-stopped \
   --api.dashboard=true \
   --providers.docker=true \
   --providers.docker.network=traefik-public \
-  --providers.file.filename=/etc/traefik/dynamic/paasd.yml \
+  --providers.file.filename=/etc/traefik/dynamic/ah.yml \
   --entrypoints.web.address=:80 \
   --entrypoints.websecure.address=:443
 
 # Start local registry
 docker run -d --name paas-registry --restart unless-stopped \
   -p 127.0.0.1:5000:5000 \
-  -v /var/lib/paasd/registry:/var/lib/registry \
+  -v /var/lib/ah/registry:/var/lib/registry \
   registry:2
 ```
 
-### 3. Build and install paasd
+### 3. Build and install ah
 
 ```bash
 # Clone repo
@@ -117,15 +117,15 @@ git clone https://github.com/dennisonbertram/agentic-hosting /agentic-hosting
 cd /agentic-hosting
 
 # Build (CGO required for SQLite)
-CGO_ENABLED=1 go build -o bin/paasd ./cmd/paasd
-cp bin/paasd /usr/local/bin/paasd
+CGO_ENABLED=1 go build -o bin/ah ./cmd/ah
+cp bin/ah /usr/local/bin/ah
 
 # Create data directory
-mkdir -p /var/lib/paasd/builds /var/lib/paasd/backups
+mkdir -p /var/lib/ah/builds /var/lib/ah/backups
 
 # Generate master key (hex-encoded 32 bytes)
-head -c 32 /dev/urandom | xxd -p -c 64 > /var/lib/paasd/master.key
-chmod 600 /var/lib/paasd/master.key
+head -c 32 /dev/urandom | xxd -p -c 64 > /var/lib/ah/master.key
+chmod 600 /var/lib/ah/master.key
 
 # Generate bootstrap token
 openssl rand -hex 32
@@ -135,16 +135,16 @@ openssl rand -hex 32
 
 ```bash
 # Set bootstrap token
-cat > /etc/default/paasd <<'EOF'
-PAASD_BOOTSTRAP_TOKEN=<your-32+-char-token-here>
+cat > /etc/default/ah <<'EOF'
+AH_BOOTSTRAP_TOKEN=<your-32+-char-token-here>
 EOF
-chmod 600 /etc/default/paasd
+chmod 600 /etc/default/ah
 
 # Install service
-cp deploy/paasd.service /etc/systemd/system/paasd.service
+cp deploy/ah.service /etc/systemd/system/ah.service
 systemctl daemon-reload
-systemctl enable paasd
-systemctl start paasd
+systemctl enable ah
+systemctl start ah
 
 # Verify
 curl http://localhost:8080/v1/system/health
@@ -276,9 +276,9 @@ DELETE /v1/databases/{dbID}                   # Delete database and data
 ### File Layout
 
 ```
-/var/lib/paasd/
-├── paasd.db             # State database (tenants, services, builds, databases)
-├── paasd-metering.db    # Metering database
+/var/lib/ah/
+├── ah.db                # State database (tenants, services, builds, databases)
+├── ah-metering.db       # Metering database
 ├── master.key           # AES-256 master key (hex-encoded, chmod 600)
 ├── builds/              # Nixpacks build workdirs (GC after build)
 ├── backups/             # SQLite backups
@@ -295,8 +295,8 @@ DELETE /v1/databases/{dbID}                   # Delete database and data
 ### Backups
 
 ```bash
-paasd backup
-# Creates timestamped gzip backups in /var/lib/paasd/backups/
+ah backup
+# Creates timestamped gzip backups in /var/lib/ah/backups/
 # Keeps last 10 backups
 # Uses VACUUM INTO for WAL-safe snapshots
 ```
@@ -315,8 +315,8 @@ paasd backup
 ### Networking
 
 - Services are accessible via Traefik at `http://<service-name>.<tenant-subdomain>.<domain>`
-- Traefik discovers services via Docker labels set by paasd
-- paasd API is loopback-only by default (Traefik reverse proxies it)
+- Traefik discovers services via Docker labels set by ah
+- ah API is loopback-only by default (Traefik reverse proxies it)
 
 ## Development
 
@@ -325,13 +325,13 @@ paasd backup
 make build
 
 # Run locally (requires Docker + gVisor)
-PAASD_BOOTSTRAP_TOKEN=dev-token-32-chars-minimum make run
+AH_BOOTSTRAP_TOKEN=dev-token-32-chars-minimum make run
 
 # Run in dev mode (no HTTPS enforcement, open registration)
-./bin/paasd --dev --open-registration --port 8080
+./bin/ah --dev --open-registration --port 8080
 
 # Backup databases
-./bin/paasd backup
+./bin/ah backup
 ```
 
 ## Claude Code Integration
@@ -378,11 +378,11 @@ Standalone scripts that work without Claude:
 
 ```bash
 # Set credentials
-export PAASD_URL="https://<your-domain>"
-export PAASD_KEY="keyid.secret"
+export AH_URL="https://<your-domain>"
+export AH_KEY="keyid.secret"
 
 # Register a new tenant (one-time)
-PAASD_BOOTSTRAP_TOKEN=<token> ./scripts/register.sh my-tenant me@example.com
+AH_BOOTSTRAP_TOKEN=<token> ./scripts/register.sh my-tenant me@example.com
 
 # Deploy from git or Docker image
 ./scripts/deploy.sh https://github.com/org/repo my-app 3000

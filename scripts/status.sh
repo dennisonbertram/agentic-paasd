@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL="${PAASD_URL:?Set PAASD_URL}"
-KEY="${PAASD_KEY:?Set PAASD_KEY}"
+URL="${AH_URL:?Set AH_URL}"
+KEY="${AH_KEY:?Set AH_KEY}"
 
 # System health
 echo "=== System Health ==="

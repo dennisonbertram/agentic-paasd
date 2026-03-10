@@ -1,20 +1,20 @@
-# Copy to /etc/traefik/dynamic/paasd-site.yml and replace DOMAIN and CONTAINER_IP
+# Copy to /etc/traefik/dynamic/ah-site.yml and replace DOMAIN and CONTAINER_IP
 # Get CONTAINER_IP with:
-#   CONTAINER=$(docker ps --filter "ancestor=127.0.0.1:5000/paasd-website/site:latest" --format "{{.Names}}" | head -1)
+#   CONTAINER=$(docker ps --filter "ancestor=127.0.0.1:5000/ah-website/site:latest" --format "{{.Names}}" | head -1)
 #   docker inspect $CONTAINER --format "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}" | awk "{print \$1}"
 
 http:
   routers:
-    paasd-site-root:
+    ah-site-root:
       rule: "Host(`DOMAIN`) || Host(`www.DOMAIN`)"
       entryPoints:
         - websecure
-      service: paasd-site-svc
+      service: ah-site-svc
       tls:
         certResolver: letsencrypt
 
   services:
-    paasd-site-svc:
+    ah-site-svc:
       loadBalancer:
         servers:
           - url: "http://CONTAINER_IP:80"

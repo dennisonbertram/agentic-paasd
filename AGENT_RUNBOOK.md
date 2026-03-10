@@ -1,10 +1,10 @@
-# paasd Agent Runbook
+# ah Agent Runbook
 
 ## Overview
 
-paasd is a self-hosted Platform-as-a-Service running on a single Linux server. It builds and runs containerized applications using Nixpacks (from Git sources) or pre-built Docker images. It also provisions PostgreSQL databases and manages environment variables per service.
+agentic-hosting (`ah`) is a self-hosted Platform-as-a-Service running on a single Linux server. It builds and runs containerized applications using Nixpacks (from Git sources) or pre-built Docker images. It also provisions PostgreSQL databases and manages environment variables per service.
 
-You are an AI agent operating paasd via its REST API. There is no dashboard — you work entirely through HTTP calls. Every action you take is a curl command or equivalent HTTP request. This runbook tells you exactly what to call, what to expect back, and what to do when things go wrong.
+You are an AI agent operating ah via its REST API. There is no dashboard — you work entirely through HTTP calls. Every action you take is a curl command or equivalent HTTP request. This runbook tells you exactly what to call, what to expect back, and what to do when things go wrong.
 
 ---
 
@@ -14,7 +14,7 @@ Before you start, you need:
 
 1. **API base URL**: `https://<your-domain>` (production, via Traefik) or `http://localhost:8080` (local dev with `--dev` flag -- no HTTPS enforcement)
 2. **API key**: A bearer token for your tenant. Set it as `API_KEY` in your shell.
-3. **Bootstrap token** (only needed when registering a new tenant): Read it from `/etc/default/paasd` on the server as `PAASD_BOOTSTRAP_TOKEN`.
+3. **Bootstrap token** (only needed when registering a new tenant): Read it from `/etc/default/ah` on the server as `AH_BOOTSTRAP_TOKEN`.
 
 Set these in your shell before running any commands:
 
@@ -132,7 +132,7 @@ You only do this once per tenant. If you already have an API key, skip to the ne
 If you have SSH access to the server, read the token:
 
 ```bash
-ssh root@<your-server-ip> "grep PAASD_BOOTSTRAP_TOKEN /etc/default/paasd | cut -d= -f2"
+ssh root@<your-server-ip> "grep AH_BOOTSTRAP_TOKEN /etc/default/ah | cut -d= -f2"
 ```
 
 Store it:
@@ -175,7 +175,7 @@ Store it wherever your agent persists credentials (environment variable, secrets
 ### What Can Go Wrong
 
 - **Rate limit hit**: You will get `429 Too Many Requests` if more than 5 registrations come from your IP in one hour, or more than 20 globally in one hour. Wait and retry.
-- **401 on registration**: The bootstrap token is wrong. Re-read it from `/etc/default/paasd`.
+- **401 on registration**: The bootstrap token is wrong. Re-read it from `/etc/default/ah`.
 
 ---
 
@@ -268,7 +268,7 @@ curl -s -X POST "$BASE_URL/v1/services/$SERVICE_ID/restart" \
 
 ## Task: Build and Deploy from Git
 
-Use this when you have application source code in a Git repository and want paasd to build it using Nixpacks.
+Use this when you have application source code in a Git repository and want ah to build it using Nixpacks.
 
 Supported Git hosts: GitHub, GitLab, Bitbucket, sr.ht, Codeberg. URLs must be HTTPS, not SSH.
 
@@ -544,7 +544,7 @@ If a service stays in `deploying` for more than 3 minutes:
    curl -s -X POST "$BASE_URL/v1/services/$SERVICE_ID/start" \
      -H "Authorization: Bearer $API_KEY"
    ```
-4. If it still does not move, check the paasd daemon logs on the server: `journalctl -u paasd -n 100 --no-pager`
+4. If it still does not move, check the ah daemon logs on the server: `journalctl -u ah -n 100 --no-pager`
 
 ### Circuit Breaker Open (`circuit_open` status)
 
@@ -606,7 +606,7 @@ Database provisioning is slow by design. If your HTTP client times out:
 
 ### Disk Full (90% Watermark)
 
-When disk usage exceeds 90%, paasd rejects new deployments. You will receive an error indicating the disk threshold has been reached.
+When disk usage exceeds 90%, ah rejects new deployments. You will receive an error indicating the disk threshold has been reached.
 
 1. Check current disk status:
    ```bash

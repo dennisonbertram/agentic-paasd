@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Provision a `$2` database named `${3:-$1-db}` and wire it to service `$1` on agentic-hosting.
 
-You are an agentic-hosting operator using `$PAASD_URL` and `$PAASD_KEY`.
+You are an agentic-hosting operator using `$AH_URL` and `$AH_KEY`.
 
 Steps:
 1. Find the service by name: `GET /v1/services` — filter by name == `$1`, get its ID. If not found, tell the user.

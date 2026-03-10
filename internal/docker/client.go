@@ -1,4 +1,4 @@
-// Package docker wraps the Docker Engine API for paasd container lifecycle.
+// Package docker wraps the Docker Engine API for ah container lifecycle.
 package docker
 
 import (
@@ -19,7 +19,7 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
-// Client wraps the Docker Engine API client with paasd-specific defaults.
+// Client wraps the Docker Engine API client with ah-specific defaults.
 type Client struct {
 	cli *client.Client
 }
@@ -93,7 +93,7 @@ func (c *Client) ConnectNetwork(ctx context.Context, networkID, containerID stri
 
 // TenantNetworkName returns the deterministic network name for a tenant.
 func TenantNetworkName(tenantID string) string {
-	return "paasd-tenant-" + tenantID
+	return "ah-tenant-" + tenantID
 }
 
 // ResourceLimits holds per-container resource constraints from tenant quotas.
@@ -129,8 +129,8 @@ func (c *Client) RunContainer(ctx context.Context, tenantID, serviceID, img stri
 		fmt.Sprintf("traefik.http.routers.%s.rule", serviceID):                     fmt.Sprintf("Host(`%s.localhost`)", serviceID),
 		fmt.Sprintf("traefik.http.routers.%s.entrypoints", serviceID):              "web",
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", serviceID): fmt.Sprintf("%d", port),
-		"paasd.tenant":  tenantID,
-		"paasd.service": serviceID,
+		"ah.tenant":  tenantID,
+		"ah.service": serviceID,
 	}
 	for k, v := range extraLabels {
 		labels[k] = v
@@ -332,7 +332,7 @@ func (c *Client) GetContainerName(ctx context.Context, containerID string) strin
 
 // containerName generates a deterministic container name from tenant and service IDs.
 func containerName(tenantID, serviceID string) string {
-	return fmt.Sprintf("paasd-%s-%s", tenantID, serviceID)
+	return fmt.Sprintf("ah-%s-%s", tenantID, serviceID)
 }
 
 // VerifyGVisorRuntime checks that the Docker daemon has the gVisor (runsc) runtime available.
@@ -420,8 +420,8 @@ func (c *Client) RunDatabase(ctx context.Context, cfg RunDatabaseConfig) (string
 			nat.Port(portStr): struct{}{},
 		},
 		Labels: map[string]string{
-			"paasd.managed": "true",
-			"paasd.type":    "database",
+			"ah.managed": "true",
+			"ah.type":    "database",
 		},
 	}
 

@@ -25,12 +25,12 @@ type BuildRequest struct {
 	SourceType string // "git"
 	SourceURL  string // git clone URL
 	SourceRef  string // branch/tag/sha
-	ImageTag   string // e.g. 127.0.0.1:5000/paasd/abc-def:12345678
+	ImageTag   string // e.g. 127.0.0.1:5000/ah/abc-def:12345678
 }
 
 // Builder runs Nixpacks builds with resource limits.
 type Builder struct {
-	workDir  string // /var/lib/paasd/builds
+	workDir  string // /var/lib/ah/builds
 	nixpacks string // path to nixpacks binary
 
 	// Global concurrency: max 3 concurrent builds
@@ -89,12 +89,12 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest, logCb func(string
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return fmt.Errorf("create build dir: %w", err)
 	}
-	// Make buildDir writable by paasd-builder
-	if err := exec.Command("chown", "-R", "paasd-builder:paasd-builder", buildDir).Run(); err != nil {
+	// Make buildDir writable by ah-builder
+	if err := exec.Command("chown", "-R", "ah-builder:ah-builder", buildDir).Run(); err != nil {
 		return fmt.Errorf("chown build dir: %w", err)
 	}
 
-	logCb("[paasd] Starting build " + req.BuildID)
+	logCb("[ah] Starting build " + req.BuildID)
 
 	// Step 1: Clone
 	if req.SourceType == "git" {
@@ -115,7 +115,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest, logCb func(string
 		return fmt.Errorf("push image: %w", err)
 	}
 
-	logCb("[paasd] Build succeeded: " + req.ImageTag)
+	logCb("[ah] Build succeeded: " + req.ImageTag)
 	return nil
 }
 
@@ -203,18 +203,18 @@ func (b *Builder) gitClone(ctx context.Context, req BuildRequest, buildDir strin
 		ref = "main"
 	}
 
-	logCb(fmt.Sprintf("[paasd] Cloning %s (ref: %s)", sanitizeURL(req.SourceURL), ref))
+	logCb(fmt.Sprintf("[ah] Cloning %s (ref: %s)", sanitizeURL(req.SourceURL), ref))
 
 	cloneCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	// Run git clone as paasd-builder user via systemd-run for isolation
-	unitName := fmt.Sprintf("paasd-clone-%s.scope", req.BuildID[:16])
+	// Run git clone as ah-builder user via systemd-run for isolation
+	unitName := fmt.Sprintf("ah-clone-%s.scope", req.BuildID[:16])
 	cmd := exec.CommandContext(cloneCtx,
 		"systemd-run", "--scope", "--quiet",
 		"--unit="+unitName,
 		"-p", "MemoryMax=512M",
-		"/usr/sbin/runuser", "-u", "paasd-builder", "--",
+		"/usr/sbin/runuser", "-u", "ah-builder", "--",
 		"git", "clone", "--depth=1", "--branch", ref,
 		"--config", "http.followRedirects=false",
 		req.SourceURL, buildDir,
@@ -248,26 +248,26 @@ func (b *Builder) gitClone(ctx context.Context, req BuildRequest, buildDir strin
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 
-	logCb("[paasd] Clone complete")
+	logCb("[ah] Clone complete")
 	return nil
 }
 
 func (b *Builder) nixpacksBuild(ctx context.Context, req BuildRequest, buildDir string, logCb func(string)) error {
-	logCb("[paasd] Running nixpacks build...")
+	logCb("[ah] Running nixpacks build...")
 
 	buildCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
 	// Run nixpacks via systemd-run with resource limits and sandboxing.
 	// Nixpacks needs Docker socket access to build images (it runs docker build internally).
-	// We run as paasd-builder (member of docker group) instead of root.
-	unitName := fmt.Sprintf("paasd-build-%s.scope", req.BuildID[:16])
+	// We run as ah-builder (member of docker group) instead of root.
+	unitName := fmt.Sprintf("ah-build-%s.scope", req.BuildID[:16])
 	cmd := exec.CommandContext(buildCtx,
 		"systemd-run", "--scope", "--quiet",
 		"--unit="+unitName,
 		"-p", "MemoryMax=2G",
 		"-p", "CPUQuota=200%",
-		"/usr/sbin/runuser", "-u", "paasd-builder", "--",
+		"/usr/sbin/runuser", "-u", "ah-builder", "--",
 		b.nixpacks, "build", buildDir, "--name", req.ImageTag,
 	)
 
@@ -303,17 +303,17 @@ func (b *Builder) nixpacksBuild(ctx context.Context, req BuildRequest, buildDir 
 		return fmt.Errorf("nixpacks build failed: %w", err)
 	}
 
-	logCb("[paasd] Nixpacks build complete")
+	logCb("[ah] Nixpacks build complete")
 	return nil
 }
 
 func (b *Builder) pushImage(ctx context.Context, req BuildRequest, logCb func(string)) error {
-	logCb("[paasd] Pushing image to local registry...")
+	logCb("[ah] Pushing image to local registry...")
 
 	pushCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	unitName := fmt.Sprintf("paasd-push-%s.scope", req.BuildID[:16])
+	unitName := fmt.Sprintf("ah-push-%s.scope", req.BuildID[:16])
 	cmd := exec.CommandContext(pushCtx,
 		"systemd-run", "--scope", "--quiet",
 		"--unit="+unitName,
@@ -348,7 +348,7 @@ func (b *Builder) pushImage(ctx context.Context, req BuildRequest, logCb func(st
 		return fmt.Errorf("docker push failed: %w", err)
 	}
 
-	logCb("[paasd] Push complete")
+	logCb("[ah] Push complete")
 	return nil
 }
 

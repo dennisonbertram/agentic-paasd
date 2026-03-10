@@ -9,16 +9,16 @@ agentic-hosting is an agentic-first self-hosted PaaS. You operate it entirely vi
 
 ## Setup (do this first)
 
-Before using any paasd commands, ensure you have:
+Before using any ah commands, ensure you have:
 
 ```bash
-export PAASD_URL="https://<your-domain>"   # or http://localhost:8080 in dev
-export PAASD_KEY="<your-api-key>"          # format: keyid.secret
+export AH_URL="https://<your-domain>"   # or http://localhost:8080 in dev
+export AH_KEY="<your-api-key>"          # format: keyid.secret
 ```
 
 Verify connectivity:
 ```bash
-curl -s $PAASD_URL/v1/system/health
+curl -s $AH_URL/v1/system/health
 # → {"status":"ok"}
 ```
 
@@ -26,7 +26,7 @@ curl -s $PAASD_URL/v1/system/health
 
 All requests (except health) require:
 ```
-Authorization: Bearer $PAASD_KEY
+Authorization: Bearer $AH_KEY
 Content-Type: application/json
 ```
 
@@ -34,12 +34,12 @@ API keys are in format `keyid.secret`. If you don't have a key, see **Register a
 
 ## Register a Tenant (one-time setup)
 
-Requires the server bootstrap token (ask the server operator, or read from `/etc/default/paasd` on the server):
+Requires the server bootstrap token (ask the server operator, or read from `/etc/default/ah` on the server):
 
 ```bash
-curl -s -X POST $PAASD_URL/v1/tenants/register \
+curl -s -X POST $AH_URL/v1/tenants/register \
   -H "Content-Type: application/json" \
-  -H "X-Bootstrap-Token: $PAASD_BOOTSTRAP_TOKEN" \
+  -H "X-Bootstrap-Token: $AH_BOOTSTRAP_TOKEN" \
   -d '{"name": "my-tenant", "email": "me@example.com"}'
 # → {"tenant_id": "...", "api_key": "keyid.secret"}
 # SAVE the api_key — it won't be shown again
@@ -49,8 +49,8 @@ curl -s -X POST $PAASD_URL/v1/tenants/register \
 
 ### From a Docker image
 ```bash
-curl -s -X POST $PAASD_URL/v1/services \
-  -H "Authorization: Bearer $PAASD_KEY" \
+curl -s -X POST $AH_URL/v1/services \
+  -H "Authorization: Bearer $AH_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"my-app","image":"nginx:alpine","port":80,"memory_mb":256,"cpu_count":1}'
 # Returns immediately with status "deploying"
@@ -60,8 +60,8 @@ curl -s -X POST $PAASD_URL/v1/services \
 ```bash
 SERVICE_ID="<id-from-above>"
 for i in $(seq 1 120); do
-  STATUS=$(curl -s -H "Authorization: Bearer $PAASD_KEY" \
-    $PAASD_URL/v1/services/$SERVICE_ID | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+  STATUS=$(curl -s -H "Authorization: Bearer $AH_KEY" \
+    $AH_URL/v1/services/$SERVICE_ID | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
   echo "[$i] $STATUS"
   [ "$STATUS" = "running" ] && break
   [ "$STATUS" = "failed" ] && { echo "Deploy failed"; break; }
@@ -74,90 +74,90 @@ Supported hosts: GitHub, GitLab, Bitbucket, sr.ht, Codeberg (HTTPS only)
 
 ```bash
 # First create the service
-SVC=$(curl -s -X POST $PAASD_URL/v1/services \
-  -H "Authorization: Bearer $PAASD_KEY" \
+SVC=$(curl -s -X POST $AH_URL/v1/services \
+  -H "Authorization: Bearer $AH_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"my-app","image":"placeholder:latest","port":3000}')
 SERVICE_ID=$(echo $SVC | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Start build
-BUILD=$(curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/builds \
-  -H "Authorization: Bearer $PAASD_KEY" \
+BUILD=$(curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/builds \
+  -H "Authorization: Bearer $AH_KEY" \
   -H "Content-Type: application/json" \
   -d '{"git_url":"https://github.com/org/repo","branch":"main"}')
 BUILD_ID=$(echo $BUILD | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Stream build logs
-curl -s -H "Authorization: Bearer $PAASD_KEY" \
-  "$PAASD_URL/v1/services/$SERVICE_ID/builds/$BUILD_ID/logs?follow=true"
+curl -s -H "Authorization: Bearer $AH_KEY" \
+  "$AH_URL/v1/services/$SERVICE_ID/builds/$BUILD_ID/logs?follow=true"
 ```
 
 ## Provision a Database
 
 ```bash
 # Create (takes up to 30s — use idempotency key to safely retry)
-DB=$(curl -s -X POST $PAASD_URL/v1/databases \
-  -H "Authorization: Bearer $PAASD_KEY" \
+DB=$(curl -s -X POST $AH_URL/v1/databases \
+  -H "Authorization: Bearer $AH_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"name":"mydb","type":"postgres"}')  # or "redis"
 DB_ID=$(echo $DB | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Get connection string
-CONN=$(curl -s -H "Authorization: Bearer $PAASD_KEY" \
-  $PAASD_URL/v1/databases/$DB_ID/connection-string \
+CONN=$(curl -s -H "Authorization: Bearer $AH_KEY" \
+  $AH_URL/v1/databases/$DB_ID/connection-string \
   | grep -o '"connection_string":"[^"]*"' | cut -d'"' -f4)
 
 # Wire to service as env var
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/env \
-  -H "Authorization: Bearer $PAASD_KEY" \
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/env \
+  -H "Authorization: Bearer $AH_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"DATABASE_URL\": \"$CONN\"}"
 
 # Restart service to pick up new env
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/restart \
-  -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/restart \
+  -H "Authorization: Bearer $AH_KEY"
 ```
 
 ## Common Operations
 
 ```bash
 # List all services
-curl -s -H "Authorization: Bearer $PAASD_KEY" $PAASD_URL/v1/services | python3 -m json.tool
+curl -s -H "Authorization: Bearer $AH_KEY" $AH_URL/v1/services | python3 -m json.tool
 
 # List all databases
-curl -s -H "Authorization: Bearer $PAASD_KEY" $PAASD_URL/v1/databases | python3 -m json.tool
+curl -s -H "Authorization: Bearer $AH_KEY" $AH_URL/v1/databases | python3 -m json.tool
 
 # Stop / start / restart a service
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/stop -H "Authorization: Bearer $PAASD_KEY"
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/start -H "Authorization: Bearer $PAASD_KEY"
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/restart -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/stop -H "Authorization: Bearer $AH_KEY"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/start -H "Authorization: Bearer $AH_KEY"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/restart -H "Authorization: Bearer $AH_KEY"
 
 # Reset circuit breaker (after 5 crashes in 10 minutes)
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/reset -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/reset -H "Authorization: Bearer $AH_KEY"
 
 # View / set / delete env vars
-curl -s -H "Authorization: Bearer $PAASD_KEY" "$PAASD_URL/v1/services/$SERVICE_ID/env?reveal=true"
-curl -s -X POST $PAASD_URL/v1/services/$SERVICE_ID/env \
-  -H "Authorization: Bearer $PAASD_KEY" -H "Content-Type: application/json" \
+curl -s -H "Authorization: Bearer $AH_KEY" "$AH_URL/v1/services/$SERVICE_ID/env?reveal=true"
+curl -s -X POST $AH_URL/v1/services/$SERVICE_ID/env \
+  -H "Authorization: Bearer $AH_KEY" -H "Content-Type: application/json" \
   -d '{"KEY": "value", "OTHER": "value2"}'
-curl -s -X DELETE $PAASD_URL/v1/services/$SERVICE_ID/env/KEY \
-  -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X DELETE $AH_URL/v1/services/$SERVICE_ID/env/KEY \
+  -H "Authorization: Bearer $AH_KEY"
 
 # Delete service or database
-curl -s -X DELETE $PAASD_URL/v1/services/$SERVICE_ID -H "Authorization: Bearer $PAASD_KEY"
-curl -s -X DELETE $PAASD_URL/v1/databases/$DB_ID -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X DELETE $AH_URL/v1/services/$SERVICE_ID -H "Authorization: Bearer $AH_KEY"
+curl -s -X DELETE $AH_URL/v1/databases/$DB_ID -H "Authorization: Bearer $AH_KEY"
 
 # Detailed system health (disk, docker, gVisor)
-curl -s -H "Authorization: Bearer $PAASD_KEY" $PAASD_URL/v1/system/health/detailed | python3 -m json.tool
+curl -s -H "Authorization: Bearer $AH_KEY" $AH_URL/v1/system/health/detailed | python3 -m json.tool
 
 # Create a named API key (e.g. for CI)
-curl -s -X POST $PAASD_URL/v1/auth/keys \
-  -H "Authorization: Bearer $PAASD_KEY" -H "Content-Type: application/json" \
+curl -s -X POST $AH_URL/v1/auth/keys \
+  -H "Authorization: Bearer $AH_KEY" -H "Content-Type: application/json" \
   -d '{"name":"ci-key","expires_in":2592000}'
 
 # Revoke a key
-curl -s -X DELETE $PAASD_URL/v1/auth/keys/$KEY_ID -H "Authorization: Bearer $PAASD_KEY"
+curl -s -X DELETE $AH_URL/v1/auth/keys/$KEY_ID -H "Authorization: Bearer $AH_KEY"
 ```
 
 ## Error Handling

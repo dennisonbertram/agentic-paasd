@@ -28,7 +28,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "backup":
-			dbPath := "/var/lib/paasd/paasd.db"
+			dbPath := "/var/lib/ah/ah.db"
 			if len(os.Args) > 2 {
 				dbPath = os.Args[2]
 			}
@@ -42,24 +42,24 @@ func main() {
 
 	port := flag.String("port", "8080", "HTTP port")
 	listenAddr := flag.String("listen-addr", "", "Listen address (default: 127.0.0.1; use 0.0.0.0 to bind all interfaces)")
-	dbPath := flag.String("db-path", "/var/lib/paasd/paasd.db", "Path to state SQLite database")
-	masterKeyPath := flag.String("master-key-path", "/var/lib/paasd/master.key", "Path to master encryption key")
+	dbPath := flag.String("db-path", "/var/lib/ah/ah.db", "Path to state SQLite database")
+	masterKeyPath := flag.String("master-key-path", "/var/lib/ah/master.key", "Path to master encryption key")
 	devMode := flag.Bool("dev", false, "Development mode (disables HTTPS enforcement)")
 	openRegistration := flag.Bool("open-registration", false, "Allow registration without bootstrap token (requires --dev)")
 	flag.Parse()
 
 	// Bootstrap token is always required unless --dev + --open-registration
-	bootstrapToken := strings.TrimSpace(os.Getenv("PAASD_BOOTSTRAP_TOKEN"))
+	bootstrapToken := strings.TrimSpace(os.Getenv("AH_BOOTSTRAP_TOKEN"))
 	if bootstrapToken == "" {
 		if !*devMode {
-			log.Fatalf("PAASD_BOOTSTRAP_TOKEN must be set (or use --dev --open-registration)")
+			log.Fatalf("AH_BOOTSTRAP_TOKEN must be set (or use --dev --open-registration)")
 		}
 		if !*openRegistration {
-			log.Fatalf("PAASD_BOOTSTRAP_TOKEN must be set. Use --open-registration with --dev to allow open registration.")
+			log.Fatalf("AH_BOOTSTRAP_TOKEN must be set. Use --open-registration with --dev to allow open registration.")
 		}
 		log.Printf("WARNING: open registration enabled — anyone can create tenants")
 	} else if len(bootstrapToken) < 32 {
-		log.Fatalf("PAASD_BOOTSTRAP_TOKEN must be at least 32 characters for brute-force resistance (got %d)", len(bootstrapToken))
+		log.Fatalf("AH_BOOTSTRAP_TOKEN must be at least 32 characters for brute-force resistance (got %d)", len(bootstrapToken))
 	}
 
 	if *openRegistration && !*devMode {
@@ -115,7 +115,7 @@ func main() {
 	}
 
 	// Create Nixpacks builder and build manager
-	nixBuilder, err := builder.NewBuilder("/var/lib/paasd/builds", "/usr/local/bin/nixpacks")
+	nixBuilder, err := builder.NewBuilder("/var/lib/ah/builds", "/usr/local/bin/nixpacks")
 	if err != nil {
 		log.Printf("WARNING: Nixpacks builder not available: %v", err)
 	}
@@ -168,7 +168,7 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
-	log.Printf("paasd listening on %s", addr)
+	log.Printf("ah listening on %s", addr)
 	if *devMode {
 		log.Printf("WARNING: running in dev mode — HTTPS enforcement disabled")
 	} else {

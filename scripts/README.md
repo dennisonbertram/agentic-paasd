@@ -1,17 +1,17 @@
-# paasd Scripts
+# agentic-hosting Scripts
 
-Bash automation scripts for common paasd operations. All scripts read configuration from environment variables.
+Bash automation scripts for common agentic-hosting operations. All scripts read configuration from environment variables.
 
 ## Setup
 
 ```bash
-export PAASD_URL="https://<your-domain>"   # paasd API base URL
-export PAASD_KEY="keyid.secret"             # Your API key
+export AH_URL="https://<your-domain>"   # ah API base URL
+export AH_KEY="keyid.secret"             # Your API key
 ```
 
 For local dev:
 ```bash
-export PAASD_URL="http://localhost:8080"
+export AH_URL="http://localhost:8080"
 ```
 
 ## Scripts
@@ -30,7 +30,7 @@ export PAASD_URL="http://localhost:8080"
 chmod +x scripts/*.sh
 
 # Register (one-time, needs bootstrap token)
-PAASD_BOOTSTRAP_TOKEN=<token> ./scripts/register.sh my-tenant me@example.com
+AH_BOOTSTRAP_TOKEN=<token> ./scripts/register.sh my-tenant me@example.com
 
 # Deploy from git
 ./scripts/deploy.sh https://github.com/org/repo my-app 3000

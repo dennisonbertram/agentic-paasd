@@ -5,8 +5,8 @@ set -euo pipefail
 SVC_NAME="${1:?Usage: db-provision.sh <service-name> <postgres|redis> [db-name]}"
 DB_TYPE="${2:?Usage: db-provision.sh <service-name> <postgres|redis> [db-name]}"
 DB_NAME="${3:-${SVC_NAME}-db}"
-URL="${PAASD_URL:?Set PAASD_URL}"
-KEY="${PAASD_KEY:?Set PAASD_KEY}"
+URL="${AH_URL:?Set AH_URL}"
+KEY="${AH_KEY:?Set AH_KEY}"
 
 if [[ "$DB_TYPE" != "postgres" && "$DB_TYPE" != "redis" ]]; then
   echo "Error: type must be 'postgres' or 'redis'"

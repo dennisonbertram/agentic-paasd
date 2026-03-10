@@ -4,8 +4,8 @@ set -euo pipefail
 # Usage: ./logs.sh <service-name> [build-id]
 NAME="${1:?Usage: logs.sh <service-name> [build-id]}"
 BUILD_ID="${2:-}"
-URL="${PAASD_URL:?Set PAASD_URL}"
-KEY="${PAASD_KEY:?Set PAASD_KEY}"
+URL="${AH_URL:?Set AH_URL}"
+KEY="${AH_KEY:?Set AH_KEY}"
 
 # Find service by name
 SVCS=$(curl -sf -H "Authorization: Bearer $KEY" "$URL/v1/services")

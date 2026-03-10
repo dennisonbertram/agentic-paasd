@@ -45,7 +45,7 @@ type Server struct {
 
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.Store == nil || cfg.Store.StateDB == nil {
-		panic("paasd: NewServer requires a non-nil Store with StateDB")
+		panic("ah: NewServer requires a non-nil Store with StateDB")
 	}
 	// Initialize auth middleware and cache invalidator early so they are
 	// guaranteed non-nil before any request can arrive.

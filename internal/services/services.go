@@ -91,7 +91,7 @@ type Manager struct {
 // NewManager creates a service manager.
 func NewManager(db *sql.DB, docker *docker.Client, masterKey []byte) *Manager {
 	if docker == nil {
-		panic("paasd: NewManager requires a non-nil Docker client")
+		panic("ah: NewManager requires a non-nil Docker client")
 	}
 	return &Manager{
 		db:          db,
@@ -297,7 +297,7 @@ func (m *Manager) Deploy(ctx context.Context, tenantID, serviceID string) error 
 	}
 
 	// Check disk space before deploy
-	if err := diskcheck.CheckAll([]string{"/var/lib/paasd", "/var/lib/docker"}, 80, 90); err != nil {
+	if err := diskcheck.CheckAll([]string{"/var/lib/ah", "/var/lib/docker"}, 80, 90); err != nil {
 		m.updateStatusWithErrorScoped(ctx, tenantID, serviceID, "failed", err.Error())
 		return fmt.Errorf("disk check: %w", err)
 	}
@@ -479,7 +479,7 @@ func (m *Manager) Delete(ctx context.Context, tenantID, serviceID string) error 
 	}
 	// Also try cleanup by deterministic container name to catch split-brain orphans
 	// where a container exists but DB doesn't have its ID.
-	expectedName := fmt.Sprintf("paasd-%s-%s", tenantID, serviceID)
+	expectedName := fmt.Sprintf("ah-%s-%s", tenantID, serviceID)
 	if cleanupErr := m.docker.StopAndRemoveByName(ctx, expectedName); cleanupErr != nil {
 		// Not an error — container may not exist by this name
 		log.Printf("services: cleanup by name %s: %v", expectedName, cleanupErr)
@@ -496,7 +496,7 @@ func (m *Manager) Delete(ctx context.Context, tenantID, serviceID string) error 
 // Also cleans up any split-brain orphan containers by label.
 func (m *Manager) StopAllForTenant(ctx context.Context, tenantID string) {
 	// First, clean up any containers with this tenant's label (catches split-brain orphans)
-	if labelContainers, err := m.docker.ListContainersByLabel(ctx, "paasd.tenant", tenantID); err == nil {
+	if labelContainers, err := m.docker.ListContainersByLabel(ctx, "ah.tenant", tenantID); err == nil {
 		for _, cid := range labelContainers {
 			_ = m.docker.StopContainer(ctx, cid)
 			_ = m.docker.RemoveContainer(ctx, cid)

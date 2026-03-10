@@ -37,7 +37,7 @@ func (m *Manager) DeployImage(ctx context.Context, tenantID, serviceID, imageTag
 	}
 
 	// Check disk space before deploy
-	if err := diskcheck.CheckAll([]string{"/var/lib/paasd", "/var/lib/docker"}, 80, 90); err != nil {
+	if err := diskcheck.CheckAll([]string{"/var/lib/ah", "/var/lib/docker"}, 80, 90); err != nil {
 		return fmt.Errorf("disk check: %w", err)
 	}
 

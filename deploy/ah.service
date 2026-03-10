@@ -1,26 +1,26 @@
 [Unit]
-Description=paasd - Agentic PaaS daemon
+Description=agentic-hosting daemon
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
-User=paasd
-Group=paasd
+User=ah
+Group=ah
 SupplementaryGroups=docker
-EnvironmentFile=-/etc/default/paasd
-ExecStart=/usr/local/bin/paasd serve \
+EnvironmentFile=-/etc/default/ah
+ExecStart=/usr/local/bin/ah serve \
   --port 8080 \
-  --db-path /var/lib/paasd/paasd.db \
-  --master-key-path /var/lib/paasd/master.key
+  --db-path /var/lib/ah/ah.db \
+  --master-key-path /var/lib/ah/master.key
 Restart=always
 RestartSec=5s
 TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=paasd
+SyslogIdentifier=ah
 
-StateDirectory=paasd
+StateDirectory=ah
 
 # Security hardening
 UMask=0077
@@ -36,7 +36,7 @@ LockPersonality=yes
 PrivateDevices=yes
 RestrictNamespaces=yes
 ProtectKernelLogs=yes
-ReadWritePaths=/var/lib/paasd /etc/traefik/dynamic/paasd.yml /run/docker.sock /var/run/docker.sock
+ReadWritePaths=/var/lib/ah /etc/traefik/dynamic/ah.yml /run/docker.sock /var/run/docker.sock
 
 [Install]
 WantedBy=multi-user.target

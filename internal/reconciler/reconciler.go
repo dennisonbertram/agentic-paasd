@@ -74,12 +74,12 @@ func isNotFoundError(err error) bool {
 }
 
 func (r *Reconciler) reconcileOnce(ctx context.Context) error {
-	// Get all paasd containers from Docker using the tenant label,
+	// Get all ah containers from Docker using the tenant label,
 	// which is set on BOTH service and database containers.
-	containerIDs, err := r.docker.ListContainersByLabel(ctx, "paasd.tenant", "")
+	containerIDs, err := r.docker.ListContainersByLabel(ctx, "ah.tenant", "")
 	if err != nil {
 		// Docker daemon may be temporarily unavailable — do NOT mutate DB state.
-		return fmt.Errorf("list paasd containers (skipping reconciliation): %w", err)
+		return fmt.Errorf("list ah containers (skipping reconciliation): %w", err)
 	}
 
 	containerSet := make(map[string]bool, len(containerIDs))
@@ -253,19 +253,19 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	// 4. Detect split-brain containers: paasd.service-labeled containers not tracked in DB.
+	// 4. Detect split-brain containers: ah.service-labeled containers not tracked in DB.
 	// We intentionally do NOT auto-repair DB state from container labels, as labels can
 	// be spoofed by any actor with Docker access. Instead, we log warnings for operator
 	// awareness and let GC handle cleanup of orphaned containers after minResourceAge.
-	allSvcContainers, listErr := r.docker.ListContainersByLabel(ctx, "paasd.service", "")
+	allSvcContainers, listErr := r.docker.ListContainersByLabel(ctx, "ah.service", "")
 	if listErr == nil {
 		for _, cid := range allSvcContainers {
 			labels := r.docker.GetContainerLabels(ctx, cid)
 			if labels == nil {
 				continue
 			}
-			svcID := labels["paasd.service"]
-			tenantID := labels["paasd.tenant"]
+			svcID := labels["ah.service"]
+			tenantID := labels["ah.tenant"]
 			if svcID == "" || tenantID == "" {
 				continue
 			}

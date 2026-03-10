@@ -1,10 +1,10 @@
 .PHONY: build run clean
 
 build:
-	CGO_ENABLED=1 go build -o bin/paasd ./cmd/paasd
+	CGO_ENABLED=1 go build -o bin/ah ./cmd/ah
 
 run: build
-	./bin/paasd --port 8080 --db-path /var/lib/paasd/paasd.db --master-key-path /var/lib/paasd/master.key
+	./bin/ah --port 8080 --db-path /var/lib/ah/ah.db --master-key-path /var/lib/ah/master.key
 
 clean:
 	rm -rf bin/

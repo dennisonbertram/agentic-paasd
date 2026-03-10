@@ -79,7 +79,7 @@ func (m *Manager) reconcileStaleBuilds() {
 	now := time.Now().Unix()
 	result, err := m.db.Exec(
 		`UPDATE builds SET status = 'failed', finished_at = ?, log = log || ? WHERE status IN ('pending', 'running')`,
-		now, "[paasd] Build failed: process restarted\n",
+		now, "[ah] Build failed: process restarted\n",
 	)
 	if err != nil {
 		log.Printf("builds: reconcile stale builds error: %v", err)
@@ -117,13 +117,13 @@ func (m *Manager) cleanupStaleBuildDirs(workDir string) {
 // ImageTag generates a deterministic image tag for local registry.
 // Uses full IDs to prevent collisions between tenants.
 func ImageTag(tenantID, serviceID, buildID string) string {
-	return fmt.Sprintf("127.0.0.1:5000/paasd/%s-%s:%s", tenantID, serviceID, buildID)
+	return fmt.Sprintf("127.0.0.1:5000/ah/%s-%s:%s", tenantID, serviceID, buildID)
 }
 
 // StartBuild creates a build record and starts the build asynchronously.
 func (m *Manager) StartBuild(ctx context.Context, tenantID, serviceID string, req StartBuildRequest) (*Build, error) {
 	// Check disk space before starting build
-	if err := diskcheck.CheckAll([]string{"/var/lib/paasd", "/var/lib/docker"}, 80, 90); err != nil {
+	if err := diskcheck.CheckAll([]string{"/var/lib/ah", "/var/lib/docker"}, 80, 90); err != nil {
 		return nil, fmt.Errorf("disk check: %w", err)
 	}
 
@@ -247,7 +247,7 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 
 	finishedAt := time.Now().Unix()
 	if err != nil {
-		logCb("[paasd] BUILD FAILED: " + err.Error())
+		logCb("[ah] BUILD FAILED: " + err.Error())
 		log.Printf("build %s failed: %v", buildID, err)
 		if _, dbErr := m.db.ExecContext(finalCtx,
 			`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ? AND status = 'running'`,
@@ -267,14 +267,14 @@ func (m *Manager) runBuild(buildID, tenantID, serviceID string, req builder.Buil
 	}
 
 	// Deploy the built image
-	logCb("[paasd] Deploying built image...")
+	logCb("[ah] Deploying built image...")
 	if m.deployFn != nil {
 		deployCtx, deployCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		if deployErr := m.deployFn(deployCtx, tenantID, serviceID, req.ImageTag); deployErr != nil {
 			log.Printf("build %s succeeded but deploy failed: %v", buildID, deployErr)
-			logCb("[paasd] Deploy failed: " + deployErr.Error())
+			logCb("[ah] Deploy failed: " + deployErr.Error())
 		} else {
-			logCb("[paasd] Deploy succeeded")
+			logCb("[ah] Deploy succeeded")
 		}
 		deployCancel()
 	}
@@ -443,7 +443,7 @@ func (m *Manager) CancelBuild(ctx context.Context, tenantID, buildID string) err
 		`UPDATE builds SET status = 'failed', finished_at = ? WHERE id = ?`,
 		now, buildID,
 	)
-	m.appendLog(ctx, buildID, "[paasd] Build cancelled by user")
+	m.appendLog(ctx, buildID, "[ah] Build cancelled by user")
 	m.closeLogSubs(buildID)
 	return nil
 }

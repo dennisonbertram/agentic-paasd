@@ -4,7 +4,7 @@ argument-hint: <service-name> [build-id]
 allowed-tools: Bash
 ---
 
-Stream logs for service `$1` on agentic-hosting at `$PAASD_URL` using `$PAASD_KEY`.
+Stream logs for service `$1` on agentic-hosting at `$AH_URL` using `$AH_KEY`.
 
 You are an agentic-hosting operator.
 

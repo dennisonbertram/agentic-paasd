@@ -114,7 +114,7 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 	}
 
 	// Check disk space before provisioning
-	if err := diskcheck.CheckAll([]string{"/var/lib/paasd", "/var/lib/docker"}, 80, 90); err != nil {
+	if err := diskcheck.CheckAll([]string{"/var/lib/ah", "/var/lib/docker"}, 80, 90); err != nil {
 		return nil, fmt.Errorf("disk check: %w", err)
 	}
 
@@ -150,8 +150,8 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 		return nil, fmt.Errorf("generate password: %w", err)
 	}
 
-	volumeName := fmt.Sprintf("paasd-db-%s", id)
-	containerName := fmt.Sprintf("paasd-db-%s-%s", tenantID[:8], id[:16])
+	volumeName := fmt.Sprintf("ah-db-%s", id)
+	containerName := fmt.Sprintf("ah-db-%s-%s", tenantID[:8], id[:16])
 
 	// Encrypt password
 	passwordEnc, err := crypto.Encrypt([]byte(password), m.masterKey)
@@ -172,8 +172,8 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 
 		switch req.Type {
 		case "postgres":
-			dbName = "paasd"
-			username = "paasd"
+			dbName = "ah"
+			username = "ah"
 			connStr = fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", username, password, port, dbName)
 		case "redis":
 			connStr = fmt.Sprintf("redis://:%s@127.0.0.1:%d/0", password, port)

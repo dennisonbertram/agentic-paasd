@@ -5,8 +5,8 @@ set -euo pipefail
 SOURCE="${1:?Usage: deploy.sh <git-url-or-image> <service-name> [port]}"
 NAME="${2:?Usage: deploy.sh <git-url-or-image> <service-name> [port]}"
 PORT="${3:-3000}"
-URL="${PAASD_URL:?Set PAASD_URL}"
-KEY="${PAASD_KEY:?Set PAASD_KEY}"
+URL="${AH_URL:?Set AH_URL}"
+KEY="${AH_KEY:?Set AH_KEY}"
 
 is_git_url() { [[ "$1" == https://* ]]; }
 

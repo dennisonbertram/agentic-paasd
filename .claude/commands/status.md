@@ -3,7 +3,7 @@ description: Show health and status of all agentic-hosting services and database
 allowed-tools: Bash
 ---
 
-You are an agentic-hosting operator. Check and display the full status of the agentic-hosting instance at `$PAASD_URL` using `$PAASD_KEY`.
+You are an agentic-hosting operator. Check and display the full status of the agentic-hosting instance at `$AH_URL` using `$AH_KEY`.
 
 Run these checks and present results in a clear, readable format:
 

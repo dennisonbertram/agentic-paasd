@@ -32,14 +32,14 @@ func runBackup(dbPath string) {
 	ts := time.Now().Format("20060102-150405")
 
 	// Backup state DB using VACUUM INTO for WAL-safe consistent snapshot
-	if err := backupSQLite(dbPath, filepath.Join(backupDir, fmt.Sprintf("paasd-%s.db.gz", ts))); err != nil {
+	if err := backupSQLite(dbPath, filepath.Join(backupDir, fmt.Sprintf("ah-%s.db.gz", ts))); err != nil {
 		log.Fatalf("backup state db: %v", err)
 	}
 
 	// Backup metering DB if it exists
 	meteringPath := dbPath[:len(dbPath)-3] + "-metering.db"
 	if _, err := os.Stat(meteringPath); err == nil {
-		if err := backupSQLite(meteringPath, filepath.Join(backupDir, fmt.Sprintf("paasd-metering-%s.db.gz", ts))); err != nil {
+		if err := backupSQLite(meteringPath, filepath.Join(backupDir, fmt.Sprintf("ah-metering-%s.db.gz", ts))); err != nil {
 			log.Printf("WARNING: backup metering db: %v", err)
 		}
 	}
