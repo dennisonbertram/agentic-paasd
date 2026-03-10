@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS usage_events (
   id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id),
+  tenant_id TEXT NOT NULL,
   service_id TEXT,
   event_type TEXT NOT NULL,
   cpu_seconds REAL NOT NULL DEFAULT 0,

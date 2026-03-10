@@ -183,6 +183,23 @@ func requireHTTPS(next http.Handler) http.Handler {
 
 
 
+// normalizeIP extracts a validated IP string from a value that may be
+// "ip", "ip:port", or "[ip]:port". Returns "" if no valid IP is found.
+func normalizeIP(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Try host:port split first
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.String()
+	}
+	return ""
+}
+
 // trustedRealIP extracts client IP from X-Real-Ip ONLY when the request comes
 // from a trusted loopback proxy. X-Forwarded-For is NOT used because clients can
 // spoof it and some proxy configs preserve the client-provided chain.
@@ -190,23 +207,12 @@ func requireHTTPS(next http.Handler) http.Handler {
 // the only trustworthy source. Falls back to RemoteAddr.
 func trustedRealIP(r *http.Request) string {
 	if isLoopback(r.RemoteAddr) {
-		// X-Real-Ip is set by Traefik to the direct client IP (not spoofable)
-		if xri := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xri != "" {
-			if ip := net.ParseIP(xri); ip != nil {
-				return ip.String()
-			}
+		if ip := normalizeIP(r.Header.Get("X-Real-Ip")); ip != "" {
+			return ip
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// RemoteAddr without port — validate as IP
-		if ip := net.ParseIP(r.RemoteAddr); ip != nil {
-			return ip.String()
-		}
-		return "unknown"
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String()
+	if ip := normalizeIP(r.RemoteAddr); ip != "" {
+		return ip
 	}
 	return "unknown"
 }
