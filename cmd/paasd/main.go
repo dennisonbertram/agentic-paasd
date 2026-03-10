@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/paasd/paasd/internal/api"
+	"github.com/paasd/paasd/internal/builder"
+	"github.com/paasd/paasd/internal/builds"
 	"github.com/paasd/paasd/internal/db"
 	"github.com/paasd/paasd/internal/docker"
+	"github.com/paasd/paasd/internal/services"
 )
 
 func main() {
@@ -92,6 +95,19 @@ func main() {
 		log.Printf("gVisor (runsc) runtime verified")
 	}
 
+	// Create Nixpacks builder and build manager
+	nixBuilder, err := builder.NewBuilder("/var/lib/paasd/builds", "/usr/local/bin/nixpacks")
+	if err != nil {
+		log.Printf("WARNING: Nixpacks builder not available: %v", err)
+	}
+
+	var buildMgr *builds.Manager
+	if nixBuilder != nil {
+		// Create service manager early to get DeployImage function
+		svcMgr := services.NewManager(store.StateDB, dockerClient, masterKey[:32])
+		buildMgr = builds.NewManager(store.StateDB, nixBuilder, svcMgr.DeployImage)
+	}
+
 	// Create server
 	srv := api.NewServer(api.ServerConfig{
 		Store:            store,
@@ -100,6 +116,7 @@ func main() {
 		BootstrapToken:   bootstrapToken,
 		OpenRegistration: *openRegistration,
 		Docker:           dockerClient,
+		BuildManager:     buildMgr,
 	})
 
 	// Default to 127.0.0.1 in ALL modes (loopback only).

@@ -13,6 +13,7 @@ import (
 	"github.com/paasd/paasd/internal/docker"
 	"github.com/paasd/paasd/internal/httpx"
 	"github.com/paasd/paasd/internal/middleware"
+	"github.com/paasd/paasd/internal/builds"
 	"github.com/paasd/paasd/internal/services"
 )
 
@@ -23,6 +24,7 @@ type ServerConfig struct {
 	BootstrapToken   string
 	OpenRegistration bool
 	Docker           *docker.Client
+	BuildManager     *builds.Manager
 }
 
 type Server struct {
@@ -35,6 +37,7 @@ type Server struct {
 	authMW           func(http.Handler) http.Handler
 	authInvalidator  *middleware.AuthCacheInvalidator
 	svcManager       *services.Manager
+	buildManager     *builds.Manager
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -59,6 +62,7 @@ func NewServer(cfg ServerConfig) *Server {
 		authInvalidator:  authInvalidator,
 		authMW:           authMW,
 		svcManager:       svcMgr,
+		buildManager:     cfg.BuildManager,
 	}
 	s.setupRoutes()
 	return s
@@ -126,6 +130,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/v1/services/{serviceID}/env", s.handleServiceEnvGet)
 		r.Post("/v1/services/{serviceID}/env", s.handleServiceEnvSet)
 		r.Delete("/v1/services/{serviceID}/env/{key}", s.handleServiceEnvDelete)
+
+		// Build routes
+		r.Post("/v1/services/{serviceID}/builds", s.handleBuildCreate)
+		r.Get("/v1/services/{serviceID}/builds", s.handleBuildList)
+		r.Get("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildGet)
+		r.Get("/v1/services/{serviceID}/builds/{buildID}/logs", s.handleBuildLogs)
+		r.Delete("/v1/services/{serviceID}/builds/{buildID}", s.handleBuildCancel)
 	})
 
 	s.router = r
