@@ -6,5 +6,3 @@ master.key
 *.key
 .env
 vendor/
-bin/
-*.db

@@ -4,6 +4,7 @@ package httpx
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -13,7 +14,9 @@ func WriteError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		log.Printf("httpx: failed to encode error response: %v", err)
+	}
 }
 
 // WriteJSON writes a JSON success response with correct headers and status code.
@@ -22,5 +25,7 @@ func WriteJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("httpx: failed to encode JSON response: %v", err)
+	}
 }

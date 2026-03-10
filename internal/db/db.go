@@ -110,16 +110,12 @@ func (s *Store) runMigrations() error {
 			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
 		}
 
-		statements := strings.Split(string(data), ";")
-		for _, stmt := range statements {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" {
-				continue
-			}
-			if _, err := tx.Exec(stmt); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("exec migration %s: %w", entry.Name(), err)
-			}
+		// Execute the entire migration file as a single exec (SQLite3 driver
+		// supports multi-statement execution). This avoids fragile semicolon
+		// splitting that breaks on semicolons inside strings or triggers.
+		if _, err := tx.Exec(string(data)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("exec migration %s: %w", entry.Name(), err)
 		}
 
 		if _, err := tx.Exec(`INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)`,
