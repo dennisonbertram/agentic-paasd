@@ -358,3 +358,22 @@ func envKeys(vars map[string]string) []string {
 	}
 	return keys
 }
+
+func (s *Server) handleServiceReset(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSvcManager(w) {
+		return
+	}
+	tenantID := middleware.GetTenantID(r.Context())
+	serviceID := chi.URLParam(r, "serviceID")
+
+	if err := s.svcManager.ResetCircuitBreaker(r.Context(), tenantID, serviceID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, "service not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to reset circuit breaker")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "circuit breaker reset"})
+}

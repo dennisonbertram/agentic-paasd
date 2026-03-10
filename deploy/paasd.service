@@ -1,0 +1,20 @@
+[Unit]
+Description=paasd - Agentic PaaS daemon
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/paasd
+ExecStart=/usr/local/bin/paasd serve \
+  --port 8080 \
+  --db-path /var/lib/paasd/paasd.db \
+  --master-key-path /var/lib/paasd/master.key
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=paasd
+
+[Install]
+WantedBy=multi-user.target

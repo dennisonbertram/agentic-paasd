@@ -130,6 +130,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/v1/services/{serviceID}/start", s.handleServiceStart)
 		r.Post("/v1/services/{serviceID}/stop", s.handleServiceStop)
 		r.Post("/v1/services/{serviceID}/restart", s.handleServiceRestart)
+		r.Post("/v1/services/{serviceID}/reset", s.handleServiceReset)
 		r.Get("/v1/services/{serviceID}/env", s.handleServiceEnvGet)
 		r.Post("/v1/services/{serviceID}/env", s.handleServiceEnvSet)
 		r.Delete("/v1/services/{serviceID}/env/{key}", s.handleServiceEnvDelete)

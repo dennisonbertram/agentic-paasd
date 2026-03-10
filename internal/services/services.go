@@ -26,9 +26,12 @@ type Service struct {
 	ContainerID string `json:"container_id,omitempty"`
 	Port        int    `json:"port"`
 	URL         string `json:"url,omitempty"`
-	LastError   string `json:"last_error,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
+	LastError    string `json:"last_error,omitempty"`
+	CrashCount   int    `json:"crash_count"`
+	CircuitOpen  bool   `json:"circuit_open"`
+	LastCrashedAt int64 `json:"last_crashed_at,omitempty"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 // CreateRequest holds parameters for creating a new service.
@@ -496,7 +499,7 @@ func (m *Manager) Logs(ctx context.Context, tenantID, serviceID string, follow b
 // List returns all services for a tenant.
 func (m *Manager) List(ctx context.Context, tenantID string) ([]*Service, error) {
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, tenant_id, name, status, image, port, container_id, last_error, created_at, updated_at
+		`SELECT id, tenant_id, name, status, image, port, container_id, last_error, crash_count, circuit_open, last_crashed_at, created_at, updated_at
 		 FROM services WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 100`,
 		tenantID,
 	)
@@ -509,11 +512,17 @@ func (m *Manager) List(ctx context.Context, tenantID string) ([]*Service, error)
 	for rows.Next() {
 		s := &Service{}
 		var containerID sql.NullString
-		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.Status, &s.Image, &s.Port, &containerID, &s.LastError, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var lastCrashedAt sql.NullInt64
+		var circuitOpen int
+		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.Status, &s.Image, &s.Port, &containerID, &s.LastError, &s.CrashCount, &circuitOpen, &lastCrashedAt, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan service: %w", err)
 		}
 		if containerID.Valid {
 			s.ContainerID = containerID.String
+		}
+		s.CircuitOpen = circuitOpen != 0
+		if lastCrashedAt.Valid {
+			s.LastCrashedAt = lastCrashedAt.Int64
 		}
 		s.URL = fmt.Sprintf("http://%s.localhost", s.ID)
 		svcs = append(svcs, s)
@@ -602,11 +611,13 @@ func (m *Manager) DeleteEnv(ctx context.Context, tenantID, serviceID, key string
 func (m *Manager) getOwned(ctx context.Context, tenantID, serviceID string) (*Service, error) {
 	s := &Service{}
 	var containerID sql.NullString
+	var circuitOpenInt int
+	var lastCrashedAtNull sql.NullInt64
 	err := m.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, name, status, image, port, container_id, last_error, created_at, updated_at
+		`SELECT id, tenant_id, name, status, image, port, container_id, last_error, crash_count, circuit_open, last_crashed_at, created_at, updated_at
 		 FROM services WHERE id = ? AND tenant_id = ?`,
 		serviceID, tenantID,
-	).Scan(&s.ID, &s.TenantID, &s.Name, &s.Status, &s.Image, &s.Port, &containerID, &s.LastError, &s.CreatedAt, &s.UpdatedAt)
+	).Scan(&s.ID, &s.TenantID, &s.Name, &s.Status, &s.Image, &s.Port, &containerID, &s.LastError, &s.CrashCount, &circuitOpenInt, &lastCrashedAtNull, &s.CreatedAt, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("service not found")
 	}
@@ -615,6 +626,10 @@ func (m *Manager) getOwned(ctx context.Context, tenantID, serviceID string) (*Se
 	}
 	if containerID.Valid {
 		s.ContainerID = containerID.String
+	}
+	s.CircuitOpen = circuitOpenInt != 0
+	if lastCrashedAtNull.Valid {
+		s.LastCrashedAt = lastCrashedAtNull.Int64
 	}
 	return s, nil
 }
@@ -657,6 +672,23 @@ func (m *Manager) updateStatusWithErrorScoped(ctx context.Context, tenantID, ser
 	if err != nil {
 		log.Printf("ERROR: failed to update status/error for service %s to %s: %v", serviceID, status, err)
 	}
+}
+
+// ResetCircuitBreaker resets the circuit breaker for a service, allowing it to restart.
+func (m *Manager) ResetCircuitBreaker(ctx context.Context, tenantID, serviceID string) error {
+	_, err := m.getOwned(ctx, tenantID, serviceID)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.ExecContext(ctx,
+		`UPDATE services SET crash_count = 0, circuit_open = 0, status = 'stopped',
+		 updated_at = ? WHERE id = ? AND tenant_id = ?`,
+		time.Now().Unix(), serviceID, tenantID)
+	if err != nil {
+		return fmt.Errorf("reset circuit breaker: %w", err)
+	}
+	log.Printf("services: circuit breaker reset for %s", serviceID)
+	return nil
 }
 
 func (m *Manager) setEnvVars(ctx context.Context, serviceID string, vars map[string]string) error {

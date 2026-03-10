@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/paasd/paasd/internal/builder"
+	"github.com/paasd/paasd/internal/diskcheck"
 )
 
 const maxLogSize = 5 * 1024 * 1024 // 5MB max log per build
@@ -121,6 +122,11 @@ func ImageTag(tenantID, serviceID, buildID string) string {
 
 // StartBuild creates a build record and starts the build asynchronously.
 func (m *Manager) StartBuild(ctx context.Context, tenantID, serviceID string, req StartBuildRequest) (*Build, error) {
+	// Check disk space before starting build
+	if err := diskcheck.Check("/var/lib/paasd", 80, 90); err != nil {
+		return nil, fmt.Errorf("disk check: %w", err)
+	}
+
 	if req.SourceType != "git" {
 		return nil, fmt.Errorf("unsupported source_type: %s (only 'git' is supported)", req.SourceType)
 	}

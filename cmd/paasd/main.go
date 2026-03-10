@@ -14,6 +14,8 @@ import (
 
 	"github.com/paasd/paasd/internal/api"
 	"github.com/paasd/paasd/internal/builder"
+	"github.com/paasd/paasd/internal/gc"
+	"github.com/paasd/paasd/internal/reconciler"
 	"github.com/paasd/paasd/internal/builds"
 	"github.com/paasd/paasd/internal/databases"
 	"github.com/paasd/paasd/internal/db"
@@ -22,6 +24,22 @@ import (
 )
 
 func main() {
+	// Check for subcommands before flag.Parse
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "backup":
+			dbPath := "/var/lib/paasd/paasd.db"
+			if len(os.Args) > 2 {
+				dbPath = os.Args[2]
+			}
+			runBackup(dbPath)
+			return
+		case "serve":
+			// Remove "serve" from args so flag.Parse works
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		}
+	}
+
 	port := flag.String("port", "8080", "HTTP port")
 	listenAddr := flag.String("listen-addr", "", "Listen address (default: 127.0.0.1; use 0.0.0.0 to bind all interfaces)")
 	dbPath := flag.String("db-path", "/var/lib/paasd/paasd.db", "Path to state SQLite database")
@@ -157,8 +175,22 @@ func main() {
 		log.Printf("HTTPS enforcement is ON. The server must be behind a TLS-terminating proxy (e.g. Traefik) that connects via loopback (127.0.0.1). X-Forwarded-Proto is only trusted from loopback RemoteAddr.")
 	}
 
+	// Start reconciler (60s interval)
+	reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
+	defer reconcilerCancel()
+	rec := reconciler.New(store.StateDB, dockerClient, 60*time.Second)
+	go rec.Run(reconcilerCtx)
+
+	// Start garbage collector (5min interval)
+	gcCtx, gcCancel := context.WithCancel(context.Background())
+	defer gcCancel()
+	garbageCollector := gc.New(store.StateDB, dockerClient, 5*time.Minute)
+	go garbageCollector.Run(gcCtx)
+
 	<-done
 	log.Println("shutting down...")
+	reconcilerCancel()
+	gcCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

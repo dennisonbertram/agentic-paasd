@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
@@ -297,8 +298,10 @@ func (c *Client) ListContainersByLabel(ctx context.Context, label, value string)
 	}
 	var ids []string
 	for _, ctr := range containers {
-		if v, ok := ctr.Labels[label]; ok && v == value {
-			ids = append(ids, ctr.ID)
+		if v, ok := ctr.Labels[label]; ok {
+			if value == "" || v == value {
+				ids = append(ids, ctr.ID)
+			}
 		}
 	}
 	return ids, nil
@@ -406,4 +409,19 @@ func (c *Client) RunDatabase(ctx context.Context, cfg RunDatabaseConfig) (string
 	}
 
 	return resp.ID, nil
+}
+
+// ListVolumes returns volume names matching the given prefix.
+func (c *Client) ListVolumes(ctx context.Context, prefix string) ([]string, error) {
+	resp, err := c.cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", prefix)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list volumes: %w", err)
+	}
+	var names []string
+	for _, v := range resp.Volumes {
+		names = append(names, v.Name)
+	}
+	return names, nil
 }

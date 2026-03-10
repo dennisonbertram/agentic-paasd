@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/paasd/paasd/internal/crypto"
+	"github.com/paasd/paasd/internal/diskcheck"
 	"github.com/paasd/paasd/internal/docker"
 )
 
@@ -110,6 +111,11 @@ func (m *Manager) Create(ctx context.Context, tenantID string, req CreateRequest
 	}
 	if req.Name == "" || len(req.Name) > 128 {
 		return nil, fmt.Errorf("name is required (max 128 chars)")
+	}
+
+	// Check disk space before provisioning
+	if err := diskcheck.Check("/var/lib/paasd", 80, 90); err != nil {
+		return nil, fmt.Errorf("disk check: %w", err)
 	}
 
 	id, err := generateID()
