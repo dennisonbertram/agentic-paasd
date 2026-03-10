@@ -63,8 +63,8 @@ const (
 )
 
 var regLimiter = &registrationLimiter{
-	entries:        make(map[string]*regEntry),
-	globalWindowAt: time.Now().Add(regWindow),
+	entries: make(map[string]*regEntry),
+	// globalWindowAt zero-value: first request starts the window
 }
 
 func init() {

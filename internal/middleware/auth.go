@@ -97,7 +97,6 @@ func (c *authCache) invalidate(keyID string) {
 // when keys are revoked or tenants are suspended.
 type AuthCacheInvalidator struct {
 	cache *authCache
-	db    *sql.DB
 }
 
 // InvalidateKey removes a single key from the auth cache.
@@ -174,7 +173,7 @@ func (t *lastUsedTracker) maybeUpdate(keyID string) {
 func Auth(db *sql.DB, masterKey []byte) (func(http.Handler) http.Handler, *AuthCacheInvalidator) {
 	tracker := newLastUsedTracker(db)
 	cache := newAuthCache()
-	invalidator := &AuthCacheInvalidator{cache: cache, db: db}
+	invalidator := &AuthCacheInvalidator{cache: cache}
 
 	mw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

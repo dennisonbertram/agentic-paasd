@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -90,15 +91,25 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	return rr.ResponseWriter.Write(b)
 }
 
-// hashRequestBody reads the request body, computes SHA-256, and replaces
-// r.Body with a new reader so downstream handlers can still read it.
+const maxHashBodySize = 1 << 20 // 1MB — matches server max body size
+
+// errBodyTooLarge is returned when the request body exceeds maxHashBodySize.
+var errBodyTooLarge = fmt.Errorf("request body too large")
+
+// hashRequestBody reads the request body (up to maxHashBodySize), computes
+// SHA-256, and replaces r.Body with a new reader so downstream handlers can
+// still read it. Returns errBodyTooLarge if the body exceeds the limit.
 func hashRequestBody(r *http.Request) (string, error) {
 	if r.Body == nil {
 		return "empty", nil
 	}
-	bodyBytes, err := io.ReadAll(r.Body)
+	lr := io.LimitReader(r.Body, maxHashBodySize+1)
+	bodyBytes, err := io.ReadAll(lr)
 	if err != nil {
 		return "", err
+	}
+	if int64(len(bodyBytes)) > maxHashBodySize {
+		return "", errBodyTooLarge
 	}
 	r.Body.Close()
 	// Replace body so downstream handlers can read it
@@ -147,7 +158,11 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 		// Body is already capped by maxBodySize middleware (1MB).
 		reqBodyHash, err := hashRequestBody(r)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "failed to read request body")
+			if err == errBodyTooLarge {
+				writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			} else {
+				writeJSONError(w, http.StatusBadRequest, "failed to read request body")
+			}
 			return
 		}
 

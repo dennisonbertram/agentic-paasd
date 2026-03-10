@@ -100,7 +100,11 @@ func (s *Server) buildDetailedHealth() DetailedHealthResponse {
 				break
 			}
 		}
-		resp.GVisor = GVisorInfo{Available: true, Version: version}
+		if version == "" {
+			// Fallback: use first non-empty line if standard prefix not found
+			version = strings.TrimSpace(string(out))
+		}
+		resp.GVisor = GVisorInfo{Available: version != "", Version: version}
 	}
 
 	// Check disk (no exec, safe syscall)
