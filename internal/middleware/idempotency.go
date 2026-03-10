@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	maxIdempotencyEntries = 1000
-	maxIdempotencyKeyLen  = 128
-	maxIdempotencyBodyLen = 16 * 1024 // 16KB max stored response
-	idempotencyTTL        = 1 * time.Hour
+	maxIdempotencyEntries       = 500
+	maxIdempotencyPerTenant     = 50
+	maxIdempotencyKeyLen        = 128
+	maxIdempotencyBodyLen       = 8 * 1024 // 8KB max stored response
+	idempotencyTTL              = 10 * time.Minute
 )
 
 type idempotencyEntry struct {
@@ -113,28 +114,37 @@ func (s *IdempotencyStore) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		// Only cache successful (2xx) responses within size bounds.
-		// Error responses are not cached to prevent "sticky failure" attacks
-		// where an attacker pins error responses for a chosen idempotency key.
+		// Error responses are not cached to prevent "sticky failure" attacks.
 		if rec.statusCode >= 200 && rec.statusCode < 300 && len(rec.body) <= maxIdempotencyBodyLen {
 			s.mu.Lock()
-			// Enforce max entries - evict oldest if at capacity
-			if len(s.entries) >= maxIdempotencyEntries {
-				var oldestKey string
-				var oldestTime time.Time
-				for k, v := range s.entries {
-					if oldestKey == "" || v.expiresAt.Before(oldestTime) {
-						oldestKey = k
-						oldestTime = v.expiresAt
-					}
-				}
-				if oldestKey != "" {
-					delete(s.entries, oldestKey)
+			// Enforce per-tenant limit to prevent single-tenant memory abuse
+			tenantPrefix := tenantID + ":"
+			tenantEntryCount := 0
+			for k := range s.entries {
+				if len(k) > len(tenantPrefix) && k[:len(tenantPrefix)] == tenantPrefix {
+					tenantEntryCount++
 				}
 			}
-			s.entries[fullKey] = &idempotencyEntry{
-				statusCode: rec.statusCode,
-				body:       rec.body,
-				expiresAt:  time.Now().Add(idempotencyTTL),
+			if tenantEntryCount < maxIdempotencyPerTenant {
+				// Enforce global max entries - evict oldest if at capacity
+				if len(s.entries) >= maxIdempotencyEntries {
+					var oldestKey string
+					var oldestTime time.Time
+					for k, v := range s.entries {
+						if oldestKey == "" || v.expiresAt.Before(oldestTime) {
+							oldestKey = k
+							oldestTime = v.expiresAt
+						}
+					}
+					if oldestKey != "" {
+						delete(s.entries, oldestKey)
+					}
+				}
+				s.entries[fullKey] = &idempotencyEntry{
+					statusCode: rec.statusCode,
+					body:       rec.body,
+					expiresAt:  time.Now().Add(idempotencyTTL),
+				}
 			}
 			s.mu.Unlock()
 		}
