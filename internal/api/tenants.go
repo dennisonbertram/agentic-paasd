@@ -2,7 +2,8 @@ package api
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -136,7 +137,8 @@ func (s *Server) handleTenantRegister(w http.ResponseWriter, r *http.Request) {
 	// global rate limit counter.
 	if s.bootstrapToken != "" {
 		provided := r.Header.Get("X-Bootstrap-Token")
-		if subtle.ConstantTimeCompare([]byte(provided), []byte(s.bootstrapToken)) != 1 {
+		// HMAC-compare to prevent length-leak from ConstantTimeCompare
+		if !hmacEqual(provided, s.bootstrapToken) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -298,15 +300,49 @@ func (s *Server) handleTenantUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
+	now := time.Now().Unix()
 
-	_, err := s.store.StateDB.Exec(
+	tx, err := s.store.StateDB.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		`UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?`,
-		time.Now().Unix(), tenantID,
+		now, tenantID,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"failed to delete tenant"}`, http.StatusInternalServerError)
 		return
 	}
 
+	// Revoke all API keys for the suspended tenant
+	_, err = tx.Exec(
+		`UPDATE api_keys SET revoked_at = ? WHERE tenant_id = ? AND revoked_at IS NULL`,
+		now, tenantID,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// hmacEqual compares two strings in constant time regardless of length.
+// Unlike subtle.ConstantTimeCompare, this does not leak the length of either input.
+func hmacEqual(a, b string) bool {
+	key := []byte("bootstrap-token-compare")
+	macA := hmac.New(sha256.New, key)
+	macA.Write([]byte(a))
+	macB := hmac.New(sha256.New, key)
+	macB.Write([]byte(b))
+	return hmac.Equal(macA.Sum(nil), macB.Sum(nil))
 }
