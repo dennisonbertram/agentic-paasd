@@ -3,6 +3,17 @@ name: agentic-hosting
 description: Operate an agentic-hosting self-hosted PaaS server via REST API. Use when deploying apps, provisioning databases, managing services, or troubleshooting on an agentic-hosting instance.
 ---
 
+## Quick Start
+
+```bash
+export AH_URL="https://<your-server>"   # or http://IP:8080
+export AH_KEY="<keyid.secret>"          # from tenant registration
+```
+
+Then in Claude Code: `/status` · `/deploy <git-url> <name>` · `/db <name> postgres` · `/logs <name>`
+
+---
+
 # agentic-hosting Operator Skill
 
 agentic-hosting is an agentic-first self-hosted PaaS. You operate it entirely via REST API — no web dashboard. This skill gives you everything needed to deploy apps, provision databases, and manage services.
