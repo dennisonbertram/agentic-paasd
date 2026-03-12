@@ -6,7 +6,7 @@ Single Go binary PaaS designed for AI agents: deploy, manage, and monitor servic
 
 ## Working Here
 
-- Default working dir: `~/develop/agentic-hosting`
+- Default working dir: `~/Develop/agentic-hosting` (capital D)
 - Always read `docs/implementation/build-log.md` at the start of a new session to orient yourself
 - Read `CHANGELOG.md` to understand recent changes
 - Server: `65.21.67.254`, SSH: `ssh -i ~/.ssh/id_hetzner_claudeops root@65.21.67.254`
